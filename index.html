@@ -2,22 +2,22 @@
 <html lang="ja">
 <head>
     <meta charset="UTF-8">
-    <title>Ultimate Audio Reactive VR/AR</title>
+    <title>Retro Psychedelic XR</title>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
     <script src="https://unpkg.com/peerjs@1.3.1/dist/peerjs.min.js"></script>
     <style>
         body { margin: 0; background: #000; overflow: hidden; font-family: sans-serif; }
         #overlay { position: absolute; width: 100%; height: 100%; display: flex; flex-direction: column; justify-content: center; align-items: center; color: white; background: #000; z-index: 100; }
-        button { padding: 30px 60px; font-size: 24px; background: linear-gradient(45deg, #00ffff, #ff00ff); color: white; border: none; border-radius: 50px; cursor: pointer; font-weight: bold; margin: 15px; box-shadow: 0 0 20px rgba(0,255,255,0.5); }
-        #status { color: #00ff88; font-size: 1.5em; margin-bottom: 20px; }
+        button { padding: 25px 50px; font-size: 20px; background: #ff00ff; color: white; border: none; border-radius: 50px; cursor: pointer; font-weight: bold; margin: 10px; }
+        #status { color: #00ffff; font-size: 1.2em; margin-bottom: 20px; }
     </style>
 </head>
 <body>
     <div id="overlay">
-        <div id="status">Macからの信号を待機中...</div>
+        <div id="status">信号を待機中... (Mac: psy-link-stable-mac)</div>
         <div id="btnContainer" style="display:none;">
-            <button id="vrBtn">VR MODE START</button>
-            <button id="arBtn">AR MODE START</button>
+            <button id="vrBtn">VR START</button>
+            <button id="arBtn">AR START</button>
         </div>
     </div>
     <audio id="remoteAudio" autoplay></audio>
@@ -25,69 +25,59 @@
     <script type="module">
         import { VRButton } from 'https://unpkg.com/three@0.128.0/examples/jsm/webxr/VRButton.js';
 
-        let scene, camera, renderer, analyzerL, analyzerR, dataL, dataR, audioCtx;
-        let currentMode = 'Y', isRandom = false;
+        let scene, camera, renderer, analyzer, dataL, audioCtx;
+        let currentMode = 'Y', autoMode = false, isRightTrigger = false;
+        let lastAutoSwitch = 0, hueBase = 0;
         const group = new THREE.Group();
-        let hueBase = 0;
 
-        // IDを固定して入力を省略
-        const peer = new Peer('psy-link-stable-quest'); 
-
-        peer.on('open', () => console.log("Quest ID: psy-link-stable-quest"));
+        const peer = new Peer('psy-link-stable-quest');
         peer.on('call', call => {
             call.answer(new MediaStream());
             call.on('stream', stream => {
                 document.getElementById('remoteAudio').srcObject = stream;
-                document.getElementById('status').innerText = "通信確立！モード選択";
+                document.getElementById('status').innerText = "Connected!";
                 document.getElementById('btnContainer').style.display = "block";
                 window.remoteStream = stream;
             });
         });
 
-        // AR/VR起動ボタンのイベント
         document.getElementById('vrBtn').onclick = () => initXR('immersive-vr');
         document.getElementById('arBtn').onclick = () => initXR('immersive-ar');
 
         async function initXR(mode) {
             audioCtx = new (window.AudioContext || window.webkitAudioContext)();
             await audioCtx.resume();
-            
-            // ステレオ解析（L/R分離）
             const source = audioCtx.createMediaStreamSource(window.remoteStream);
-            const splitter = audioCtx.createChannelSplitter(2);
-            source.connect(splitter);
-
-            analyzerL = audioCtx.createAnalyser();
-            analyzerR = audioCtx.createAnalyser();
-            splitter.connect(analyzerL, 0);
-            splitter.connect(analyzerR, 1);
-            
-            dataL = new Uint8Array(analyzerL.frequencyBinCount);
-            dataR = new Uint8Array(analyzerR.frequencyBinCount);
-            
+            analyzer = audioCtx.createAnalyser();
+            analyzer.fftSize = 256;
+            source.connect(analyzer);
+            dataL = new Uint8Array(analyzer.frequencyBinCount);
             source.connect(audioCtx.destination);
+            
             document.getElementById('overlay').style.display = 'none';
-
             setupThreeJS(mode);
         }
 
         function setupThreeJS(mode) {
             scene = new THREE.Scene();
             camera = new THREE.PerspectiveCamera(75, window.innerWidth/window.innerHeight, 0.1, 1000);
-            renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
+            renderer = new THREE.WebGLRenderer({ antialias: false, alpha: true }); // パフォーマンス重視
             renderer.setSize(window.innerWidth, window.innerHeight);
             renderer.xr.enabled = true;
             document.body.appendChild(renderer.domElement);
-
-            // XRセッション開始要求
-            navigator.xr.requestSession(mode, {
-                optionalFeatures: ['local-floor', 'bounded-floor']
-            }).then(session => {
-                renderer.xr.setSession(session);
-            });
-
+            navigator.xr.requestSession(mode, { optionalFeatures: ['local-floor'] }).then(s => renderer.xr.setSession(s));
             scene.add(group);
             animate();
+        }
+
+        // メモリ解放用関数
+        function cleanGroup() {
+            while(group.children.length > 0){ 
+                const obj = group.children[0];
+                if(obj.geometry) obj.geometry.dispose();
+                if(obj.material) obj.material.dispose();
+                group.remove(obj); 
+            }
         }
 
         function animate() {
@@ -95,76 +85,73 @@
                 const session = renderer.xr.getSession();
                 if (session) {
                     for (const source of session.inputSources) {
-                        if (source.gamepad) {
-                            const b = source.gamepad.buttons;
-                            if (source.handedness === 'right') {
-                                if (b[4]?.pressed) currentMode = 'A';
-                                if (b[5]?.pressed) currentMode = 'B';
-                                isRandom = b[0]?.pressed; // トリガーでランダム
-                            } else {
-                                if (b[4]?.pressed) currentMode = 'X';
-                                if (b[5]?.pressed) currentMode = 'Y';
+                        const b = source.gamepad.buttons;
+                        if (source.handedness === 'right') {
+                            if (b[4]?.pressed) currentMode = 'A';
+                            if (b[5]?.pressed) currentMode = 'B';
+                            isRightTrigger = b[0]?.pressed; // 右トリガー（押してる間だけ）
+                        } else {
+                            if (b[4]?.pressed) currentMode = 'X';
+                            if (b[5]?.pressed) currentMode = 'Y';
+                            // 左トリガー（1回押しでトグル）
+                            if (b[0]?.pressed && Date.now() - lastAutoSwitch > 500) {
+                                autoMode = !autoMode;
+                                lastAutoSwitch = Date.now();
                             }
                         }
                     }
                 }
 
-                if (analyzerL && analyzerR) {
-                    analyzerL.getByteFrequencyData(dataL);
-                    analyzerR.getByteFrequencyData(dataR);
-
-                    // 音響パラメーター抽出
+                if (analyzer) {
+                    analyzer.getByteFrequencyData(dataL);
                     const low = dataL[5]/255, mid = dataL[20]/255, high = dataL[60]/255;
-                    const balance = (low - (dataR[5]/255)) * 10; // 左右の低音差
-                    hueBase += 0.002 + high * 0.05;
+                    hueBase += 0.003 + high * 0.02;
 
-                    if (isRandom && low > 0.8) currentMode = ['A','B','X','Y'][Math.floor(Date.now()/500)%4];
+                    // オート/ランダムモード切替
+                    if ((autoMode || isRightTrigger) && low > 0.8 && Date.now() - lastAutoSwitch > 300) {
+                        currentMode = ['A','B','X','Y'][Math.floor(Math.random()*4)];
+                        lastAutoSwitch = Date.now();
+                    }
 
-                    // 構造の再構築（毎フレーム全消去して音から生成）
-                    group.clear();
+                    cleanGroup();
 
                     if (currentMode === 'Y') {
-                        // ギザギザリング：倍音(high)で頂点数を変える
-                        for(let j=0; j<10; j++) {
-                            const points = [];
-                            const segments = 64 + Math.floor(high * 64);
-                            for(let i=0; i<=segments; i++) {
-                                const angle = (i / segments) * Math.PI * 2;
-                                const d = dataL[i%32]/255 * (10 + j);
-                                points.push(new THREE.Vector3(
-                                    Math.cos(angle) * (10 + j + d) + balance,
-                                    Math.sin(angle) * (10 + j + d),
-                                    -j * 10
-                                ));
+                        // お気に入りリングの強化版
+                        for(let j=0; j<12; j++){
+                            const pts = [];
+                            for(let i=0; i<=64; i++){
+                                const a = (i/64)*Math.PI*2;
+                                const r = 10 + j*2 + (dataL[i%32]/255)*(5+j);
+                                pts.push(new THREE.Vector3(Math.cos(a)*r, Math.sin(a)*r, -j*15));
                             }
-                            const line = new THREE.Line(new THREE.BufferGeometry().setFromPoints(points), 
-                                new THREE.LineBasicMaterial({color: new THREE.Color().setHSL((hueBase + j*0.1)%1, 1, 0.5)}));
-                            group.add(line);
+                            group.add(new THREE.Line(new THREE.BufferGeometry().setFromPoints(pts), new THREE.LineBasicMaterial({color: new THREE.Color().setHSL((hueBase+j*0.05)%1,1,0.5)})));
                         }
                     } else if (currentMode === 'A') {
-                        // 変幻自在な多面体
-                        const geo = new THREE.IcosahedronGeometry(10 * low, Math.floor(mid * 5));
-                        const mat = new THREE.MeshBasicMaterial({color: 0xff00ff, wireframe: true});
-                        const mesh = new THREE.Mesh(geo, mat);
-                        mesh.position.z = -30;
-                        mesh.rotation.y = Date.now() * 0.001;
-                        mesh.rotation.x = balance;
-                        group.add(mesh);
-                    } else if (currentMode === 'B') {
-                        // 音素の粒子
-                        for(let i=0; i<50; i++) {
-                            const size = (dataL[i%50]/255) * 5;
-                            const p = new THREE.Mesh(new THREE.BoxGeometry(size, size, size), 
-                                new THREE.MeshBasicMaterial({color: 0x00ffff, wireframe: true}));
-                            p.position.set(Math.cos(i)*20 + balance, Math.sin(i)*20, -50 + (i*low));
-                            group.add(p);
+                        // 3D MAZE: 音圧で壁が押し寄せる迷路
+                        for(let i=0; i<16; i++){
+                            const wallGeo = new THREE.BoxGeometry(10, 20 * low, 10);
+                            const wall = new THREE.Mesh(wallGeo, new THREE.MeshBasicMaterial({color: new THREE.Color().setHSL((hueBase+i*0.1)%1, 1, 0.5), wireframe:true}));
+                            wall.position.set(Math.sin(i)*30, Math.cos(i)*30, -50 + (i*5));
+                            group.add(wall);
                         }
+                    } else if (currentMode === 'B') {
+                        // BEZIERS: 曲線が舞う
+                        const pts = [];
+                        for(let i=0; i<50; i++){
+                            pts.push(new THREE.Vector3(Math.sin(i+low*10)*20, Math.cos(i+mid*10)*20, -30-i*2));
+                        }
+                        const curve = new THREE.CatmullRomCurve3(pts);
+                        const tube = new THREE.TubeGeometry(curve, 64, 0.5 + high*2, 8, false);
+                        group.add(new THREE.Mesh(tube, new THREE.MeshBasicMaterial({color: new THREE.Color().setHSL(hueBase%1,1,0.5), wireframe:true})));
                     } else if (currentMode === 'X') {
-                        // 歪曲グリッド
-                        const grid = new THREE.GridHelper(200, 20 + Math.floor(low*20), 0xffffff, 0x00ffff);
-                        grid.position.y = -10;
-                        grid.rotation.z = balance * 0.2;
-                        group.add(grid);
+                        // MYSTIFY: 浮遊するラインの残像
+                        for(let i=0; i<5; i++){
+                            const poly = new THREE.TorusGeometry(10+i*low*5, 0.2, 8, 4 + Math.floor(mid*10));
+                            const m = new THREE.Mesh(poly, new THREE.MeshBasicMaterial({color: new THREE.Color().setHSL((hueBase+i*0.2)%1,1,0.5)}));
+                            m.position.set(Math.sin(Date.now()*0.001+i)*20, Math.cos(Date.now()*0.001+i)*20, -40);
+                            m.rotation.z = Date.now()*0.002;
+                            group.add(m);
+                        }
                     }
                 }
                 renderer.render(scene, camera);
