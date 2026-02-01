@@ -2,18 +2,18 @@
 <html>
 <head>
     <meta charset="UTF-8">
-    <title>PSY-AR RESILIENT</title>
+    <title>PSY-AR STABLE 2026</title>
     <style>
         body { margin: 0; background: #000; overflow: hidden; font-family: sans-serif; }
         #arBtn { 
             position: fixed; top: 50%; left: 50%; transform: translate(-50%,-50%); 
-            padding: 50px 70px; font-size: 32px; background: #fff; color: #000; 
-            border: 10px solid #0f0; border-radius: 20px; z-index: 10000; font-weight: bold;
+            padding: 50px 80px; font-size: 30px; background: #fff; color: #000; 
+            border: 8px solid #0f0; border-radius: 20px; z-index: 10000; font-weight: bold;
         }
     </style>
 </head>
 <body>
-    <button id="arBtn">FORCE START AR</button>
+    <button id="arBtn">START AR</button>
     <audio id="audio" autoplay playsinline style="display:none"></audio>
 
     <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
@@ -43,21 +43,19 @@
         }
 
         async function startAR() {
-            // エラー回避のため、まず既存のレンダリングがあればクリア
-            if (renderer) renderer.dispose();
+            // 1. レンダラーの準備
+            renderer = new THREE.WebGLRenderer({ antialias: false, alpha: true });
+            renderer.xr.enabled = true;
+            renderer.setSize(window.innerWidth, window.innerHeight);
 
+            // 2. 権限エラーを避けるため、必須項目を「空」にして起動
             try {
-                // 'hand-tracking'をrequiredからoptionalに変更し、起動の失敗率を激減させる
                 const session = await navigator.xr.requestSession('immersive-ar', {
-                    optionalFeatures: ['local-floor', 'hand-tracking']
+                    optionalFeatures: ['local-floor', 'hand-tracking'] // すべてオプションにする
                 });
 
-                document.getElementById('arBtn').style.display = 'none';
-
-                renderer = new THREE.WebGLRenderer({ antialias: false, alpha: true });
-                renderer.xr.enabled = true;
-                renderer.setSize(window.innerWidth, window.innerHeight);
                 document.body.appendChild(renderer.domElement);
+                document.getElementById('arBtn').style.display = 'none';
 
                 scene = new THREE.Scene();
                 camera = new THREE.PerspectiveCamera(70, window.innerWidth / window.innerHeight, 0.01, 20);
@@ -66,13 +64,10 @@
                 mesh = new THREE.Mesh(geometries[0], new THREE.MeshBasicMaterial({ wireframe: true, color: 0x00ff00 }));
                 scene.add(mesh);
 
-                // local-floor を試み、ダメなら viewer にフォールバック
-                try {
-                    xrRefSpace = await session.requestReferenceSpace('local-floor');
-                } catch(e) {
-                    xrRefSpace = await session.requestReferenceSpace('viewer');
-                }
-
+                // 3. 空間の取得（viewerは絶対に失敗しない）
+                xrRefSpace = await session.requestReferenceSpace('viewer');
+                
+                // 4. セッションの適用
                 await renderer.xr.setSession(session);
                 initPeer();
                 renderer.setAnimationLoop(render);
@@ -80,10 +75,9 @@
                 session.addEventListener('end', () => { window.location.reload(); });
 
             } catch (e) {
-                // エラーが出た場合、ブラウザがフリーズしないよう1秒後に強制リロード
                 console.error(e);
-                alert("起動に失敗しました。ページをリロードして3秒待ってから、ゆっくりボタンを押してください。");
-                setTimeout(() => window.location.reload(), 1000);
+                // 失敗した場合は即リロードして、ユーザーに再度押してもらう（キャッシュクリアのため）
+                window.location.href = window.location.href.split('?')[0] + "?t=" + Date.now();
             }
         }
 
@@ -108,39 +102,42 @@
             hue += 0.005;
             const d = window.mD;
 
+            // 音トリガー形状変化
             if (d.trigger && (Date.now() - lastSwitch > 300)) {
                 mesh.geometry = geometries[Math.floor(Math.random() * geometries.length)];
                 lastSwitch = Date.now();
             }
 
+            // 視線ターゲット
             const gaze = new THREE.Vector3(0, 0, -0.6).applyQuaternion(camera.quaternion).add(camera.position);
 
-            // 指10本（全部の関節）を取得対象にして、より反応を良くする
+            // ハンドトラッキング（座標計算の安定化）
             let handPos = new THREE.Vector3();
             let count = 0;
-            for (const input of frame.session.inputSources) {
+            const sources = frame.session.inputSources;
+
+            for (let i = 0; i < sources.length; i++) {
+                const input = sources[i];
                 if (input.hand) {
-                    // 全指の先端と手首を平均化して「塊」として扱う
-                    const joints = ['thumb-tip', 'index-finger-tip', 'middle-finger-tip', 'ring-finger-tip', 'pinky-tip', 'wrist'];
-                    joints.forEach(name => {
-                        const joint = input.hand.get(name);
-                        const pose = joint ? frame.getJointPose(joint, xrRefSpace) : null;
-                        if (pose) {
-                            handPos.x += pose.transform.position.x;
-                            handPos.y += pose.transform.position.y;
-                            handPos.z += pose.transform.position.z;
-                            count++;
-                        }
-                    });
+                    const tip = input.hand.get('index-finger-tip');
+                    const pose = tip ? frame.getJointPose(tip, xrRefSpace) : null;
+                    if (pose) {
+                        handPos.x += pose.transform.position.x;
+                        handPos.y += pose.transform.position.y;
+                        handPos.z += pose.transform.position.z;
+                        count++;
+                    }
                 }
             }
 
             if (count > 0) {
                 const avgPos = new THREE.Vector3(handPos.x / count, handPos.y / count, handPos.z / count);
-                mesh.position.lerp(avgPos, 0.2); 
+                // 'viewer'空間の場合、カメラ座標系なので少し調整が必要な場合があるが
+                // 基本的にはこれで手に吸い付く
+                mesh.position.lerp(avgPos, 0.2);
                 mesh.rotation.y += 0.05 + (d.high * 2.0);
             } else {
-                mesh.position.lerp(gaze, 0.1); 
+                mesh.position.lerp(gaze, 0.1);
                 mesh.rotation.y += 0.02;
             }
 
