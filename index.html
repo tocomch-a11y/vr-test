@@ -2,7 +2,7 @@
 <html lang="ja">
 <head>
     <meta charset="UTF-8">
-    <title>Psychedelic VR Tunnel - WebRTC Link</title>
+    <title>Psychedelic VR Tunnel - High Sensitivity</title>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
     <script src="https://unpkg.com/peerjs@1.3.1/dist/peerjs.min.js"></script>
     <style>
@@ -28,7 +28,6 @@
         let tunnel, particles;
         const statusEl = document.getElementById('status');
         
-        // PeerJSの設定
         const peer = new Peer(); 
 
         function initScene() {
@@ -69,10 +68,9 @@
             call.on('stream', (remoteStream) => {
                 statusEl.innerText = "受信成功！解析を開始します...";
                 
-                // Chrome/Questの自動再生制限対策
                 const audio = new Audio();
                 audio.srcObject = remoteStream;
-                audio.muted = true; // Quest側で音を鳴らすならここをfalseに
+                audio.muted = false; // Quest本体からも音を出す（確認用）
                 
                 audio.onloadedmetadata = () => {
                     audio.play();
@@ -82,10 +80,11 @@
                     
                     analyzer = audioCtx.createAnalyser();
                     analyzer.fftSize = 512;
+                    analyzer.smoothingTimeConstant = 0.8;
                     source.connect(analyzer);
                     
-                    // Questのスピーカーからも音を出したい場合は以下をコメント解除
-                    // source.connect(audioCtx.destination);
+                    // Questのスピーカーに出力
+                    source.connect(audioCtx.destination);
                     
                     dataArray = new Uint8Array(analyzer.frequencyBinCount);
                     statusEl.innerText = "デジタル音源受信中！ENTER VR を押してください";
@@ -103,16 +102,19 @@
             renderer.setAnimationLoop(() => {
                 if (analyzer) {
                     analyzer.getByteFrequencyData(dataArray);
-                    const bass = dataArray[5] / 255;
-                    const mid = dataArray[40] / 255;
                     
-                    tunnel.rotation.y += 0.01 + bass * 0.05;
-                    tunnel.scale.set(1 + bass * 0.3, 1, 1 + bass * 0.3);
+                    // 感度を大幅にブースト (5.0倍)
+                    const bass = (dataArray[5] / 255) * 5.0;
+                    const mid = (dataArray[40] / 255) * 5.0;
+                    
+                    // 音楽に合わせた動的な演出
+                    tunnel.rotation.y += 0.005 + bass * 0.1;
+                    tunnel.scale.set(1 + bass, 1, 1 + bass);
                     tunnel.material.color.setHSL((Date.now() * 0.0001 + mid) % 1, 1, 0.5);
 
                     const pos = particles.geometry.attributes.position.array;
                     for (let i = 2; i < pos.length; i += 3) {
-                        pos[i] += 0.5 + bass * 3;
+                        pos[i] += 0.5 + bass * 8; // 低音でパーティクルが加速
                         if (pos[i] > 200) pos[i] = -200;
                     }
                     particles.geometry.attributes.position.needsUpdate = true;
