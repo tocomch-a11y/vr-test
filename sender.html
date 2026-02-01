@@ -2,42 +2,44 @@
 <html lang="ja">
 <head>
     <meta charset="UTF-8">
-    <title>Audio Sender</title>
+    <title>Mac Audio Sender</title>
     <script src="https://unpkg.com/peerjs@1.3.1/dist/peerjs.min.js"></script>
     <style>
         body { font-family: sans-serif; background: #1a1a1a; color: white; text-align: center; padding: 50px; }
-        button { padding: 20px 40px; font-size: 20px; background: #00ff88; border-radius: 10px; border: none; font-weight: bold; }
-        .id-label { font-size: 24px; color: #00ffff; margin: 20px; background: #000; padding: 10px; display: inline-block; }
+        input { padding: 15px; font-size: 18px; border-radius: 10px; border: none; margin-bottom: 20px; text-align: center; }
+        button { padding: 20px; font-size: 20px; cursor: pointer; background: #00ff88; border-radius: 10px; border: none; font-weight: bold; }
     </style>
 </head>
 <body>
     <h1>Mac音源 送信機</h1>
-    <div class="id-label">ID: mac-digital-link</div>
+    <input type="text" id="targetId" placeholder="Questに表示されたIDを入力">
     <br>
-    <button id="startBtn">配信開始 (VB-CABLEを選択)</button>
-    <p id="status">準備中...</p>
+    <button id="sendBtn">1. VB-CABLEで配信開始</button>
+    <p id="status">QuestのIDを入力してボタンを押してください</p>
 
     <script>
-        // IDを確実に固定
-        const peer = new Peer('mac-digital-link');
+        const peer = new Peer();
 
-        document.getElementById('startBtn').onclick = async () => {
+        document.getElementById('sendBtn').onclick = async () => {
+            const targetId = document.getElementById('targetId').value;
+            if (!targetId) return alert("QuestのIDを入力してください");
+
             try {
-                // VB-CABLEの音を取得
+                // VB-CABLE音源の取得
                 const stream = await navigator.mediaDevices.getUserMedia({ 
                     audio: { echoCancellation: false, noiseSuppression: false, autoGainControl: false } 
                 });
                 
-                // Questからの接続を待つ
-                peer.on('call', (call) => {
-                    console.log("Quest接続!");
-                    call.answer(stream);
+                // Questへ発信
+                const call = peer.call(targetId, stream);
+                
+                document.getElementById('status').innerText = "送信中... Questの画面を確認してください";
+                
+                call.on('error', (err) => {
+                    alert("通信エラー: " + err);
                 });
-
-                document.getElementById('status').innerText = "配信中... Questで接続してください";
-                document.getElementById('startBtn').style.opacity = "0.5";
             } catch (err) {
-                alert("ブラウザのマイク許可で VB-CABLE を選んでください");
+                alert("VB-CABLEの選択に失敗しました。");
             }
         };
     </script>
