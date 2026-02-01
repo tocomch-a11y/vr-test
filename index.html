@@ -2,23 +2,25 @@
 <html>
 <head>
     <meta charset="UTF-8">
-    <title>PSY-AR FINAL</title>
+    <title>PSY-AR STABLE</title>
     <style>
         body { margin: 0; background: transparent; overflow: hidden; }
-        #arBtn { position: fixed; top: 50%; left: 50%; transform: translate(-50%,-50%); padding: 60px; font-size: 30px; background: #0f0; border: none; border-radius: 20px; z-index: 10001; cursor: pointer; font-weight: bold; }
+        #arBtn { position: fixed; top: 50%; left: 50%; transform: translate(-50%,-50%); padding: 60px; font-size: 30px; background: #00ff00; color: #000; border: none; border-radius: 20px; z-index: 10001; cursor: pointer; font-weight: bold; }
     </style>
 </head>
 <body>
-    <button id="arBtn">START AR MODE</button>
+    <button id="arBtn">START AR</button>
     <audio id="audio" autoplay playsinline></audio>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
     <script src="https://unpkg.com/peerjs@1.3.1/dist/peerjs.min.js"></script>
     <script>
-        let scene, camera, renderer, mesh, xrRefSpace, geometries = [];
+        let scene, camera, renderer, mesh, xrRefSpace;
+        let geometries = [];
         let macData = { low: 0, mid: 0, high: 0, trigger: false };
         let lastSwitch = 0, hue = 0;
         const audio = document.getElementById('audio');
 
+        // 12種類の幾何学
         function initGeos() {
             geometries = [];
             for(let i=0; i<12; i++) {
@@ -29,30 +31,19 @@
         const btn = document.getElementById('arBtn');
         btn.onclick = async () => {
             if (navigator.xr) {
-                try {
-                    // 明示的に immersive-ar のみを要求
-                    const session = await navigator.xr.requestSession('immersive-ar', {
-                        requiredFeatures: ['local-floor', 'hand-tracking']
-                    });
-                    btn.style.display = 'none';
-                    startXR(session);
-                } catch (e) {
-                    alert("AR NOT SUPPORTED: " + e.message);
-                }
+                const session = await navigator.xr.requestSession('immersive-ar', {
+                    requiredFeatures: ['local-floor', 'hand-tracking']
+                });
+                btn.style.display = 'none';
+                startXR(session);
             }
         };
 
         function startXR(session) {
-            // alpha: true と抗体色を設定してARを強制
-            renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true, premultipliedAlpha: false });
-            renderer.setPixelRatio(window.devicePixelRatio);
+            renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
             renderer.setSize(window.innerWidth, window.innerHeight);
             renderer.xr.enabled = true;
-
             scene = new THREE.Scene();
-            // 背景を完全に透明に
-            scene.background = null; 
-            
             camera = new THREE.PerspectiveCamera(70, window.innerWidth/window.innerHeight, 0.01, 20);
             
             initGeos();
@@ -62,27 +53,29 @@
             session.requestReferenceSpace('local-floor').then(ref => {
                 xrRefSpace = ref;
                 renderer.xr.setSession(session);
-                renderer.setAnimationLoop(render);
-                initPeer();
-            });
-
-            // セッション終了時のクリーンアップ
-            session.addEventListener('end', () => {
-                renderer.setAnimationLoop(null);
-                window.location.reload();
+                initPeer(); // 通信開始
+                renderer.setAnimationLoop(render); // ループ開始
             });
         }
 
         function initPeer() {
             const peer = new Peer('quest-receiver'); 
             peer.on('connection', conn => {
-                conn.on('data', d => { macData = d; });
+                conn.on('data', d => {
+                    // データの受信を確実にする
+                    if(d) {
+                        macData.low = d.low || 0;
+                        macData.mid = d.mid || 0;
+                        macData.high = d.high || 0;
+                        macData.trigger = !!d.trigger;
+                    }
+                });
             });
             peer.on('call', call => {
                 call.answer(new MediaStream());
                 call.on('stream', s => { 
                     audio.srcObject = s; 
-                    audio.play().catch(console.error);
+                    audio.play();
                 });
             });
         }
@@ -91,16 +84,17 @@
             if (!frame || !xrRefSpace) return;
             hue += 0.005;
 
-            // ランダム形状切り替え
-            if (macData.trigger && (Date.now() - lastSwitch > 400)) {
+            // 1. 低音トリガーによる形状ランダム切り替え
+            if (macData.trigger && (Date.now() - lastSwitch > 350)) {
                 mesh.geometry = geometries[Math.floor(Math.random() * geometries.length)];
                 lastSwitch = Date.now();
             }
 
-            // 指10本のトラッキングと視線方向
+            // 2. 視線方向の計算（常に正面を維持するためのターゲット）
             const gazeDir = new THREE.Vector3(0, 0, -0.6).applyQuaternion(camera.quaternion).add(camera.position);
-            let totalPos = new THREE.Vector3(), count = 0;
 
+            // 3. 全ての指（10本）のトラッキング
+            let totalPos = new THREE.Vector3(), count = 0;
             for (const input of frame.session.inputSources) {
                 if (input.hand) {
                     ['thumb-tip', 'index-finger-tip', 'middle-finger-tip', 'ring-finger-tip', 'pinky-tip'].forEach(j => {
@@ -111,19 +105,27 @@
                 }
             }
 
+            // 4. 動的な位置・回転制御
             if (count > 0) {
                 const avgPos = totalPos.divideScalar(count);
-                // 視線方向に引っ張る
-                mesh.position.lerp(avgPos.lerp(gazeDir, 0.2), 0.2);
-                mesh.rotation.y += 0.05 + (macData.high * 0.5);
+                // 指先の平均位置に、視線方向の補正を加えて吸い付かせる
+                mesh.position.lerp(avgPos.lerp(gazeDir, 0.3), 0.2);
+                // 指の数と高音域で回転を加速
+                mesh.rotation.y += 0.05 + (macData.high * 0.5) + (count * 0.005);
             } else {
+                // 手が認識されない時は視線の正面に浮かせる
                 mesh.position.lerp(gazeDir, 0.1);
-                mesh.rotation.y += 0.01;
+                mesh.rotation.y += 0.02; // 手がなくても自律回転
             }
 
-            mesh.scale.setScalar(0.7 + (macData.low * 2.0));
-            mesh.material.color.setHSL((hue + macData.mid) % 1, 1, 0.5);
+            // 5. 音に合わせたビジュアル変化
+            const s = 0.5 + (macData.low * 2.5);
+            mesh.scale.setScalar(s);
+            mesh.rotation.x += 0.01 + (macData.mid * 0.1);
             
+            // サイケデリック・カラー
+            mesh.material.color.setHSL((hue + (macData.mid * 0.2)) % 1, 1, 0.5);
+
             renderer.render(scene, camera);
         }
     </script>
