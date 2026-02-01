@@ -2,44 +2,45 @@
 <html lang="ja">
 <head>
     <meta charset="UTF-8">
-    <title>Quest Receiver VR</title>
+    <title>Quest VR - Sync Fixed</title>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
     <script src="https://unpkg.com/peerjs@1.3.1/dist/peerjs.min.js"></script>
     <style>
         body { margin: 0; background: #000; overflow: hidden; font-family: sans-serif; }
-        #overlay { position: absolute; top: 0; left: 0; width: 100%; height: 100%; display: flex; flex-direction: column; justify-content: center; align-items: center; color: white; background: #000; z-index: 100; }
-        .id-display { font-size: 24px; color: #00ffff; margin: 20px; padding: 10px; border: 1px solid #00ffff; }
-        button { padding: 20px 40px; font-size: 20px; background: #ff00ff; border: none; border-radius: 50px; cursor: pointer; color: white; font-weight: bold; }
+        #overlay { position: absolute; top: 0; left: 0; width: 100%; height: 100%; display: flex; flex-direction: column; justify-content: center; align-items: center; color: white; background: #000; z-index: 100; text-align: center; }
+        .id-label { font-size: 24px; color: #00ffff; margin: 10px; padding: 10px; border: 2px solid #00ffff; }
+        button { padding: 25px 50px; font-size: 22px; background: #ff00ff; color: white; border: none; border-radius: 50px; cursor: pointer; font-weight: bold; margin: 20px; }
+        #status { color: #00ff88; font-weight: bold; }
     </style>
 </head>
 <body>
     <div id="overlay">
-        <h1>Quest受信機</h1>
-        <div id="idStatus">Peer準備中...</div>
-        <div id="idLabel" class="id-display">----</div>
-        <button id="startBtn">1. VR準備 (ここをクリック)</button>
-        <p>このIDをMac側に入力してください</p>
+        <h1>VR Audio Link</h1>
+        <div id="status">Peer準備中...</div>
+        <div id="idLabel" class="id-label">----</div>
+        <div id="actionArea">
+            <p>1. このIDをMacに入力してください</p>
+        </div>
     </div>
 
     <script type="module">
         import { VRButton } from 'https://unpkg.com/three@0.128.0/examples/jsm/webxr/VRButton.js';
 
-        let scene, analyzer, dataArray, audioCtx, tunnel;
-        const idLabel = document.getElementById('idLabel');
-
-        // Quest専用の固定に近いIDを生成
-        const questId = 'quest-vr-' + Math.floor(Math.random() * 999);
+        let scene, camera, renderer, analyzer, dataArray, audioCtx, tunnel, remoteStream;
+        
+        // ID生成
+        const questId = 'vr-target-' + Math.floor(Math.random() * 999);
         const peer = new Peer(questId);
 
         peer.on('open', (id) => {
-            idLabel.innerText = id;
-            document.getElementById('idStatus').innerText = "準備完了！";
+            document.getElementById('idLabel').innerText = id;
+            document.getElementById('status').innerText = "待機中...";
         });
 
-        // シーン初期化
+        // Scene設定
         scene = new THREE.Scene();
-        const camera = new THREE.PerspectiveCamera(90, window.innerWidth/window.innerHeight, 0.1, 1000);
-        const renderer = new THREE.WebGLRenderer({ antialias: true });
+        camera = new THREE.PerspectiveCamera(90, window.innerWidth/window.innerHeight, 0.1, 1000);
+        renderer = new THREE.WebGLRenderer({ antialias: true });
         renderer.setSize(window.innerWidth, window.innerHeight);
         renderer.xr.enabled = true;
         document.body.appendChild(renderer.domElement);
@@ -50,43 +51,50 @@
         tunnel.rotation.x = Math.PI / 2;
         scene.add(tunnel);
 
-        // Macからの「着信」を処理
+        // Macからの着信
         peer.on('call', (call) => {
-            console.log("Macからの着信を検知");
-            // 自分のマイクは送らない
-            call.answer(new MediaStream());
-
-            call.on('stream', (remoteStream) => {
-                console.log("音声ストリームを受信");
-                if (!audioCtx) {
-                    audioCtx = new (window.AudioContext || window.webkitAudioContext)();
-                }
-                audioCtx.resume().then(() => {
-                    const source = audioCtx.createMediaStreamSource(remoteStream);
-                    analyzer = audioCtx.createAnalyser();
-                    source.connect(analyzer);
-                    source.connect(audioCtx.destination);
-                    dataArray = new Uint8Array(analyzer.frequencyBinCount);
-                    document.getElementById('overlay').style.display = 'none';
-                });
+            call.answer(new MediaStream()); // 返信用空ストリーム
+            call.on('stream', (stream) => {
+                remoteStream = stream;
+                document.getElementById('status').innerText = "通信確立！";
+                // 通信がきたら、解析開始ボタンを出す
+                const btn = document.createElement('button');
+                btn.innerText = "2. 連動を開始してVRへ";
+                btn.onclick = startAnalysis;
+                document.getElementById('actionArea').innerHTML = "";
+                document.getElementById('actionArea').appendChild(btn);
             });
         });
+
+        async function startAnalysis() {
+            if (!remoteStream) return;
+            
+            // AudioContextの強制起動
+            audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+            await audioCtx.resume();
+
+            // 音声解析の接続
+            const source = audioCtx.createMediaStreamSource(remoteStream);
+            analyzer = audioCtx.createAnalyser();
+            analyzer.fftSize = 256;
+            source.connect(analyzer);
+            source.connect(audioCtx.destination);
+            
+            dataArray = new Uint8Array(analyzer.frequencyBinCount);
+            
+            // UIを消してVR開始
+            document.getElementById('overlay').style.display = 'none';
+        }
 
         renderer.setAnimationLoop(() => {
             if (analyzer) {
                 analyzer.getByteFrequencyData(dataArray);
-                const volume = (dataArray[10] / 255) * 5;
+                const volume = (dataArray[10] / 255) * 8; // 感度強め
                 tunnel.scale.set(1 + volume, 1, 1 + volume);
-                tunnel.rotation.y += 0.01;
+                tunnel.rotation.y += 0.01 + (volume * 0.05);
             }
             renderer.render(scene, camera);
         });
-
-        document.getElementById('startBtn').onclick = () => {
-            if (!audioCtx) audioCtx = new (window.AudioContext || window.webkitAudioContext)();
-            audioCtx.resume();
-            document.getElementById('startBtn').innerText = "Macからの接続待ち...";
-        };
     </script>
 </body>
 </html>
