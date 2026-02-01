@@ -2,124 +2,88 @@
 <html lang="ja">
 <head>
     <meta charset="UTF-8">
-    <title>Psychedelic VR Tunnel</title>
+    <title>Psychedelic VR (Audio Fixed)</title>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
     <script src="https://unpkg.com/peerjs@1.3.1/dist/peerjs.min.js"></script>
     <style>
-        body { margin: 0; background-color: #000; overflow: hidden; font-family: sans-serif; }
+        body { margin: 0; background: #000; overflow: hidden; font-family: sans-serif; }
         #overlay { position: absolute; top: 0; left: 0; width: 100%; height: 100%; display: flex; flex-direction: column; justify-content: center; align-items: center; color: white; background: #000; z-index: 100; }
-        #status { margin-top: 20px; color: #00ffff; font-family: monospace; text-align: center; }
-        input { padding: 10px; font-size: 16px; border-radius: 5px; border: none; margin-bottom: 10px; width: 250px; text-align: center; }
-        button { padding: 20px 40px; font-size: 18px; background: linear-gradient(45deg, #00ffff, #ff00ff); color: white; border: none; border-radius: 50px; cursor: pointer; font-weight: bold; }
+        button { padding: 20px 40px; font-size: 20px; background: #00ffff; color: #000; border: none; border-radius: 50px; cursor: pointer; font-weight: bold; }
+        audio { margin-top: 20px; width: 300px; } /* Questで見えるようにする */
     </style>
 </head>
 <body>
     <div id="overlay">
-        <h1>Psychedelic VR</h1>
-        <input type="text" id="targetIdInput" placeholder="送信機IDを入力 (例: vr-audio-mac-1234)">
-        <button id="startBtn">Mac音源に接続して起動</button>
-        <div id="status">MacのIDを入力してボタンを押してください</div>
+        <h1>VR連動テスト</h1>
+        <button id="startBtn">Macと接続してVR開始</button>
+        <p id="status">Macの配信開始を待ってください</p>
+        <audio id="questAudio" controls autoplay></audio>
     </div>
 
     <script type="module">
         import { VRButton } from 'https://unpkg.com/three@0.128.0/examples/jsm/webxr/VRButton.js';
 
-        let scene, camera, renderer, analyzer, dataArray, audioCtx;
-        let tunnel, particles;
+        let scene, analyzer, dataArray, audioCtx;
+        let tunnel;
         const statusEl = document.getElementById('status');
-        const peer = new Peer(); // 自分のIDは自動生成
+        const audioEl = document.getElementById('questAudio');
+        const peer = new Peer(); 
 
-        function initScene() {
-            scene = new THREE.Scene();
-            camera = new THREE.PerspectiveCamera(90, window.innerWidth / window.innerHeight, 0.1, 1000);
-            renderer = new THREE.WebGLRenderer({ antialias: true });
-            renderer.setSize(window.innerWidth, window.innerHeight);
-            renderer.xr.enabled = true;
-            document.body.appendChild(renderer.domElement);
-            document.body.appendChild(VRButton.createButton(renderer));
+        // シーン構築
+        scene = new THREE.Scene();
+        const camera = new THREE.PerspectiveCamera(90, window.innerWidth/window.innerHeight, 0.1, 1000);
+        const renderer = new THREE.WebGLRenderer({ antialias: true });
+        renderer.setSize(window.innerWidth, window.innerHeight);
+        renderer.xr.enabled = true;
+        document.body.appendChild(renderer.domElement);
+        document.body.appendChild(VRButton.createButton(renderer));
 
-            // トンネル
-            const tunnelGeom = new THREE.CylinderGeometry(30, 30, 500, 64, 100, true);
-            const tunnelMat = new THREE.MeshBasicMaterial({ color: 0xff00ff, wireframe: true, side: THREE.DoubleSide, transparent: true, opacity: 0.3 });
-            tunnel = new THREE.Mesh(tunnelGeom, tunnelMat);
-            tunnel.rotation.x = Math.PI / 2;
-            scene.add(tunnel);
+        const tunnelGeom = new THREE.CylinderGeometry(30, 30, 500, 32, 1, true);
+        tunnel = new THREE.Mesh(tunnelGeom, new THREE.MeshBasicMaterial({ color: 0xff00ff, wireframe: true }));
+        tunnel.rotation.x = Math.PI / 2;
+        scene.add(tunnel);
 
-            // パーティクル
-            const pGeom = new THREE.BufferGeometry();
-            const pCount = 10000;
-            const pPos = new Float32Array(pCount * 3);
-            for(let i=0; i<pCount*3; i++) { pPos[i] = (Math.random() - 0.5) * 400; }
-            pGeom.setAttribute('position', new THREE.BufferAttribute(pPos, 3));
-            particles = new THREE.Points(pGeom, new THREE.PointsMaterial({ size: 0.2, color: 0x00ffff, transparent: true }));
-            scene.add(particles);
-
-            animate();
-        }
-
-        async function setupAudioLink() {
-            const targetId = document.getElementById('targetIdInput').value;
-            if (!targetId) {
-                alert("送信機IDを入力してください");
-                return;
-            }
-
-            // Questのオーディオ制限を解除
+        async function start() {
+            // AudioContextの初期化
             audioCtx = new (window.AudioContext || window.webkitAudioContext)();
             await audioCtx.resume();
-
-            statusEl.innerText = "接続中...";
             
-            // Macに発信
-            const call = peer.call(targetId, new MediaStream());
+            statusEl.innerText = "Mac(mac-sender)を呼び出し中...";
+            
+            // Macに電話をかける
+            const call = peer.call('mac-sender', new MediaStream());
 
-            call.on('stream', (remoteStream) => {
-                statusEl.innerText = "受信成功！";
+            call.on('stream', (stream) => {
+                statusEl.innerText = "受信成功！音が鳴るか確認してください";
                 
-                // Questで音を鳴らすための設定
-                const audio = new Audio();
-                audio.srcObject = remoteStream;
-                audio.play(); 
+                // 1. Audioタグで再生（これでQuestの音が確実に出る）
+                audioEl.srcObject = stream;
+                audioEl.play();
 
-                const source = audioCtx.createMediaStreamSource(remoteStream);
+                // 2. 音声解析の開始
+                const source = audioCtx.createMediaStreamSource(stream);
                 analyzer = audioCtx.createAnalyser();
-                analyzer.fftSize = 512;
+                analyzer.fftSize = 256;
                 source.connect(analyzer);
-                source.connect(audioCtx.destination); // Questのスピーカーへ
+                // スピーカーにも接続（二重にならないよう注意）
+                source.connect(audioCtx.destination);
                 
                 dataArray = new Uint8Array(analyzer.frequencyBinCount);
-                statusEl.innerText = "連動開始！ENTER VRを押してください";
-                document.getElementById('startBtn').style.display = 'none';
-                document.getElementById('targetIdInput').style.display = 'none';
-            });
-
-            peer.on('error', (err) => {
-                statusEl.innerText = "エラー: IDが正しくないか送信機がオフです";
+                document.getElementById('overlay').style.display = 'none';
             });
         }
 
-        function animate() {
-            renderer.setAnimationLoop(() => {
-                if (analyzer) {
-                    analyzer.getByteFrequencyData(dataArray);
-                    const bass = (dataArray[10] / 255) * 6; // 感度高め
-                    tunnel.rotation.y += 0.01 + bass * 0.1;
-                    tunnel.scale.set(1 + bass, 1, 1 + bass);
-                    const pos = particles.geometry.attributes.position.array;
-                    for (let i = 2; i < pos.length; i += 3) {
-                        pos[i] += 0.5 + bass * 10;
-                        if (pos[i] > 200) pos[i] = -200;
-                    }
-                    particles.geometry.attributes.position.needsUpdate = true;
-                }
-                renderer.render(scene, camera);
-            });
-        }
-
-        document.getElementById('startBtn').addEventListener('click', () => {
-            setupAudioLink();
-            initScene();
+        renderer.setAnimationLoop(() => {
+            if (analyzer) {
+                analyzer.getByteFrequencyData(dataArray);
+                const volume = dataArray[5] / 255;
+                tunnel.scale.set(1 + volume * 2, 1, 1 + volume * 2);
+                tunnel.rotation.y += 0.01;
+            }
+            renderer.render(scene, camera);
         });
+
+        document.getElementById('startBtn').onclick = start;
     </script>
 </body>
 </html>
