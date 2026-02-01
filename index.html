@@ -2,114 +2,113 @@
 <html lang="ja">
 <head>
     <meta charset="UTF-8">
-    <title>Quest AR - Instant Start</title>
+    <title>Instant AR Quest</title>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
     <script src="https://unpkg.com/peerjs@1.3.1/dist/peerjs.min.js"></script>
     <style>
-        body { margin: 0; background: #000; overflow: hidden; font-family: sans-serif; }
-        #overlay { position: absolute; width: 100%; height: 100%; display: flex; flex-direction: column; justify-content: center; align-items: center; background: #000; z-index: 100; }
-        button { padding: 40px 80px; font-size: 30px; background: #00ffff; border: none; border-radius: 60px; font-weight: bold; cursor: pointer; box-shadow: 0 0 30px #00ffff; }
-        #status { color: #fff; margin-top: 20px; font-size: 18px; }
+        body { margin: 0; background: #000; overflow: hidden; }
+        #arBtn { 
+            position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%);
+            padding: 50px 100px; font-size: 32px; background: #00ffff; border: none; 
+            border-radius: 20px; font-weight: bold; cursor: pointer; z-index: 1000;
+        }
+        #status { position: absolute; bottom: 10%; width: 100%; text-align: center; color: white; font-family: sans-serif; }
     </style>
 </head>
 <body>
-    <div id="overlay">
-        <button id="arBtn">START AR NOW</button>
-        <div id="status">PeerJS Initializing...</div>
-    </div>
+    <button id="arBtn">START AR</button>
+    <div id="status">PeerJS Initializing...</div>
     <audio id="remoteAudio" autoplay></audio>
 
     <script type="module">
-        let scene, camera, renderer, activeMesh, xrSession;
+        let scene, camera, renderer, activeMesh;
         let macData = { low: 0, mid: 0, high: 0, trigger: false };
         let currentIdx = 0, lastSwitch = 0, hueBase = 0;
         const geometries = [];
 
-        // --- 1. ページ読み込み時に描画系を「全て」準備しておく（遅延防止） ---
-        scene = new THREE.Scene();
-        camera = new THREE.PerspectiveCamera(70, window.innerWidth/window.innerHeight, 0.1, 100);
-        renderer = new THREE.WebGLRenderer({ antialias: false, alpha: true, powerPreference: "high-performance" });
-        renderer.setPixelRatio(1);
-        renderer.setSize(window.innerWidth, window.innerHeight);
-        renderer.xr.enabled = true;
+        // --- 事前準備 ---
+        const initGraphics = () => {
+            scene = new THREE.Scene();
+            camera = new THREE.PerspectiveCamera(70, window.innerWidth/window.innerHeight, 0.1, 100);
+            renderer = new THREE.WebGLRenderer({ antialias: false, alpha: true });
+            renderer.xr.enabled = true;
 
-        // 幾何学データの先行生成
-        const baseGeos = [
-            new THREE.TorusGeometry(3, 0.1, 8, 32), new THREE.IcosahedronGeometry(3, 1),
-            new THREE.TorusKnotGeometry(3, 1, 64, 8), new THREE.BoxGeometry(4, 4, 4),
-            new THREE.OctahedronGeometry(3, 0), new THREE.SphereGeometry(3, 12, 12),
-            new THREE.CylinderGeometry(2, 2, 8, 12), new THREE.DodecahedronGeometry(3, 0),
-            new THREE.TorusGeometry(3, 1.5, 5, 6), new THREE.ConeGeometry(3, 8, 12),
-            new THREE.TorusKnotGeometry(3, 0.1, 80, 3), new THREE.CapsuleGeometry(2, 4, 2, 12)
-        ];
-        geometries.push(...baseGeos);
-        activeMesh = new THREE.Mesh(geometries[0], new THREE.MeshBasicMaterial({wireframe: true, transparent: true}));
-        scene.add(activeMesh);
+            const baseGeos = [
+                new THREE.TorusGeometry(3, 0.1, 8, 32), new THREE.IcosahedronGeometry(3, 1),
+                new THREE.TorusKnotGeometry(3, 0.5, 64, 8), new THREE.BoxGeometry(4, 4, 4),
+                new THREE.OctahedronGeometry(3, 0), new THREE.SphereGeometry(3, 12, 12),
+                new THREE.CylinderGeometry(2, 2, 8, 12), new THREE.DodecahedronGeometry(3, 0),
+                new THREE.TorusGeometry(3, 1.2, 5, 6), new THREE.ConeGeometry(3, 8, 12),
+                new THREE.TorusKnotGeometry(3, 0.1, 80, 3), new THREE.CapsuleGeometry(2, 4, 2, 12)
+            ];
+            geometries.push(...baseGeos);
+            activeMesh = new THREE.Mesh(geometries[0], new THREE.MeshBasicMaterial({wireframe: true, transparent: true}));
+            scene.add(activeMesh);
+        };
 
-        // PeerJS Setup
+        // --- PeerJS (Macとの通信) ---
         const peer = new Peer('psy-link-stable-quest');
-        peer.on('open', () => document.getElementById('status').innerText = "Ready. Press the Button.");
+        peer.on('open', () => document.getElementById('status').innerText = "Peer Ready. Press START AR.");
         peer.on('call', call => {
             call.answer(new MediaStream());
             call.on('stream', stream => document.getElementById('remoteAudio').srcObject = stream);
         });
         peer.on('connection', conn => {
-            conn.on('data', data => macData = data);
+            conn.on('data', data => { macData = data; });
         });
 
-        // --- 2. ボタンクリック：XR開始命令以外は何もさせない ---
-        document.getElementById('arBtn').addEventListener('click', function() {
-            // ARセッションの要求（これが最優先）
+        initGraphics();
+
+        // --- AR起動の鍵：一切の非同期を挟まない ---
+        const btn = document.getElementById('arBtn');
+        btn.onclick = () => {
+            // navigator.xr.requestSession は必ず関数の直下で呼ぶ
             navigator.xr.requestSession('immersive-ar', {
                 requiredFeatures: ['local-floor', 'hand-tracking']
-            }).then(onSessionStarted).catch(err => {
-                alert("AR Start Failed: " + err.message);
+            }).then((session) => {
+                btn.style.display = 'none';
+                document.getElementById('status').style.display = 'none';
+                
+                renderer.xr.setSession(session);
+                renderer.setAnimationLoop(render);
+            }).catch(err => {
+                document.getElementById('status').innerText = "Error: " + err.message;
+                console.error(err);
             });
-        });
-
-        function onSessionStarted(session) {
-            xrSession = session;
-            renderer.xr.setSession(session);
-            document.getElementById('overlay').style.display = 'none';
-            document.body.appendChild(renderer.domElement);
-            renderer.setAnimationLoop(render);
-        }
+        };
 
         function render(time, frame) {
             hueBase += 0.005;
 
+            // Mac側からのトリガーで形状変化
             if (macData.trigger && Date.now() - lastSwitch > 800) {
                 currentIdx = (currentIdx + 1) % 12;
                 activeMesh.geometry = geometries[currentIdx];
                 lastSwitch = Date.now();
             }
 
-            let handScale = 0;
+            // ハンドトラッキング
             if (frame) {
-                const inputSources = frame.session.inputSources;
-                for (const input of inputSources) {
-                    if (input.hand) {
-                        const index = input.hand.get('index-finger-tip');
-                        const wrist = input.hand.get('wrist');
-                        const pIdx = frame.getJointPose(index, renderer.xr.getReferenceSpace());
+                const session = frame.session;
+                for (const source of session.inputSources) {
+                    if (source.hand) {
+                        const indexTip = source.hand.get('index-finger-tip');
+                        const wrist = source.hand.get('wrist');
+                        const pIdx = frame.getJointPose(indexTip, renderer.xr.getReferenceSpace());
                         const pWri = frame.getJointPose(wrist, renderer.xr.getReferenceSpace());
                         if (pIdx && pWri) {
                             const pos = pIdx.transform.position;
                             activeMesh.position.set(pos.x, pos.y, pos.z);
-                            handScale = Math.hypot(pos.x-pWri.transform.position.x, pos.y-pWri.transform.position.y) * 12;
+                            const dist = Math.hypot(pos.x-pWri.transform.position.x, pos.y-pWri.transform.position.y) * 10;
+                            const s = 0.5 + (macData.low * 2) + dist;
+                            activeMesh.scale.set(s, s, s);
                         }
                     }
                 }
             }
 
-            const lookVec = new THREE.Vector3(0,0,-0.3).applyQuaternion(camera.quaternion);
-            activeMesh.position.add(lookVec);
-
-            const s = 0.3 + (macData.low * 2.5) + handScale;
-            activeMesh.scale.set(s, s, s);
-            activeMesh.rotation.y += 0.02 + macData.high * 0.1;
+            activeMesh.rotation.y += 0.02 + macData.high * 0.2;
             activeMesh.material.color.setHSL((hueBase + macData.mid)%1, 1, 0.5);
-
             renderer.render(scene, camera);
         }
     </script>
