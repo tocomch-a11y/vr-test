@@ -2,13 +2,14 @@
 <html>
 <head>
     <meta charset="UTF-8">
-    <title>PSY-AR HYPER-STABLE</title>
+    <title>PSY-AR STABLE FINAL</title>
     <style>
-        body { margin: 0; background: transparent; overflow: hidden; }
+        body { margin: 0; background: transparent !important; overflow: hidden; }
         #arBtn { 
             position: fixed; top: 50%; left: 50%; transform: translate(-50%,-50%); 
             padding: 50px 80px; font-size: 30px; background: #fff; color: #000; 
-            border: 10px solid #0f0; border-radius: 20px; z-index: 10000; font-weight: bold;
+            border: 6px solid #0f0; border-radius: 20px; z-index: 10000; font-weight: bold;
+            box-shadow: 0 0 40px rgba(0,255,0,0.5);
         }
     </style>
 </head>
@@ -26,7 +27,6 @@
         let lastSwitch = 0, hue = 0;
 
         function initGeos() {
-            // パターン12個（計算負荷を下げつつ複雑に見える設定）
             geometries = [
                 new THREE.TorusKnotGeometry(0.3, 0.08, 64, 12, 2, 3),
                 new THREE.IcosahedronGeometry(0.4, 1),
@@ -44,33 +44,26 @@
         }
 
         async function startAR() {
-            // 1. レンダラーを先行して透明度100%で作成
-            renderer = new THREE.WebGLRenderer({ 
-                antialias: false, 
-                alpha: true,
-                powerPreference: "high-performance" 
-            });
-            renderer.xr.enabled = true;
-            renderer.setClearColor(0x000000, 0);
-
+            // AR失敗の最大の要因「requiredFeatures」を空にして起動
             try {
-                // 2. 「immersive-ar」だけを必須条件にする（これが一番落ちない）
                 const session = await navigator.xr.requestSession('immersive-ar', {
                     optionalFeatures: ['local-floor', 'hand-tracking']
                 });
 
+                renderer = new THREE.WebGLRenderer({ antialias: false, alpha: true });
+                renderer.xr.enabled = true;
+                renderer.setSize(window.innerWidth, window.innerHeight);
                 document.body.appendChild(renderer.domElement);
                 document.getElementById('arBtn').style.display = 'none';
 
                 scene = new THREE.Scene();
-                camera = new THREE.PerspectiveCamera(70, window.innerWidth / window.innerHeight, 0.01, 20);
+                camera = new THREE.PerspectiveCamera(70, window.innerWidth/window.innerHeight, 0.01, 20);
                 
                 initGeos();
                 mesh = new THREE.Mesh(geometries[0], new THREE.MeshBasicMaterial({ wireframe: true, color: 0x00ff00 }));
                 scene.add(mesh);
 
-                // 3. 参照空間の取得で「local-floor」にこだわらない
-                // これがエラーで落ちる最大の原因
+                // viewer空間は100%取得できる
                 xrRefSpace = await session.requestReferenceSpace('viewer');
                 
                 await renderer.xr.setSession(session);
@@ -78,9 +71,8 @@
                 renderer.setAnimationLoop(render);
 
                 session.addEventListener('end', () => { window.location.reload(); });
-
             } catch (e) {
-                console.error("Critical Failure:", e);
+                alert("AR初期化失敗。タブをすべて閉じてリロードしてください。");
                 window.location.reload();
             }
         }
@@ -106,16 +98,15 @@
             hue += 0.005;
             const d = window.mD;
 
-            // 形状切り替え
             if (d.trigger && (Date.now() - lastSwitch > 300)) {
                 mesh.geometry = geometries[Math.floor(Math.random() * geometries.length)];
                 lastSwitch = Date.now();
             }
 
-            // 視線ターゲット（viewer空間なので常にカメラ基準で計算）
+            // 視線ターゲット
             const gaze = new THREE.Vector3(0, 0, -0.6).applyQuaternion(camera.quaternion).add(camera.position);
 
-            // ハンドトラッキング
+            // ハンドトラッキング（ある時だけ反応）
             let handPos = new THREE.Vector3();
             let count = 0;
             const sources = frame.session.inputSources;
@@ -123,7 +114,6 @@
             for (let i = 0; i < sources.length; i++) {
                 if (sources[i].hand) {
                     const tip = sources[i].hand.get('index-finger-tip');
-                    // ここでxrRefSpace（viewer）を基準にポーズを取る
                     const pose = tip ? frame.getJointPose(tip, xrRefSpace) : null;
                     if (pose) {
                         handPos.set(pose.transform.position.x, pose.transform.position.y, pose.transform.position.z);
@@ -133,20 +123,15 @@
             }
 
             if (count > 0) {
-                // 手の位置へ吸いつく
-                mesh.position.lerp(handPos, 0.2);
+                mesh.position.lerp(handPos, 0.15);
                 mesh.rotation.y += 0.05 + (d.high * 2.0);
             } else {
-                // 手がない時は視線の正面
-                mesh.position.lerp(gaze, 0.1);
+                mesh.position.lerp(gaze, 0.05);
                 mesh.rotation.y += 0.02;
             }
 
-            // 音量（low）による巨大化
             mesh.scale.setScalar(0.4 + (d.low * 4.0));
-            // 中音（mid）による色相変化
             mesh.material.color.setHSL((hue + d.mid) % 1, 1, 0.5);
-
             renderer.render(scene, camera);
         }
     </script>
