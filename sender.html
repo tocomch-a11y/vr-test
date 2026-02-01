@@ -1,31 +1,20 @@
 <!DOCTYPE html>
-<html lang="ja">
-<head>
-    <meta charset="UTF-8">
-    <title>Mac Sender</title>
+<html>
+<head><title>Mac Sender</title></head>
+<body style="background:#1a1a1a; color:white; text-align:center; padding:50px;">
+    <h1>Mac Sender (Auto ID)</h1>
+    <button id="btn" style="padding:20px; font-size:20px; cursor:pointer;">1. 配信開始 (VB-CABLE)</button>
+    <p id="status">Questでページを開くのを待っています...</p>
     <script src="https://unpkg.com/peerjs@1.3.1/dist/peerjs.min.js"></script>
-    <style>
-        body { font-family: sans-serif; background: #1a1a1a; color: white; text-align: center; padding: 50px; }
-        input { padding: 15px; font-size: 18px; border-radius: 10px; margin: 20px; text-align: center; width: 250px; }
-        button { padding: 20px 40px; font-size: 20px; cursor: pointer; background: #00ff88; border: none; border-radius: 10px; font-weight: bold; }
-    </style>
-</head>
-<body>
-    <h1>Mac音源 送信機</h1>
-    <input type="text" id="targetId" placeholder="QuestのIDを入力">
-    <br>
-    <button id="sendBtn">配信開始 (VB-CABLEを選択)</button>
     <script>
-        const peer = new Peer();
-        document.getElementById('sendBtn').onclick = async () => {
-            const id = document.getElementById('targetId').value;
-            if(!id) return alert("IDを入力してください");
-            try {
-                const stream = await navigator.mediaDevices.getUserMedia({ 
-                    audio: { echoCancellation: false, noiseSuppression: false, autoGainControl: false } 
-                });
-                peer.call(id, stream);
-            } catch (err) { alert("VB-CABLEを選んでください"); }
+        const peer = new Peer('psy-link-stable-mac');
+        document.getElementById('btn').onclick = async () => {
+            const stream = await navigator.mediaDevices.getUserMedia({ 
+                audio: { echoCancellation: false, noiseSuppression: false, autoGainControl: false } 
+            });
+            // Questへ自動発信
+            peer.call('psy-link-stable-quest', stream);
+            document.getElementById('status').innerText = "送信中！Questのボタンを押して開始してください";
         };
     </script>
 </body>
