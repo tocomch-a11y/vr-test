@@ -2,60 +2,51 @@
 <html>
 <head>
     <meta charset="UTF-8">
-    <title>PSY-AR EMISSION</title>
+    <title>PSY-AR STABLE</title>
     <style>
         body { margin: 0; background: #000; overflow: hidden; }
-        #arBtn { position: fixed; top: 50%; left: 50%; transform: translate(-50%,-50%); padding: 80px; font-size: 30px; background: #ff00ff; color: #fff; border: none; border-radius: 20px; z-index: 10000; font-weight: bold; cursor: pointer; }
+        #arBtn { position: fixed; top: 50%; left: 50%; transform: translate(-50%,-50%); padding: 80px; font-size: 30px; background: #00ff00; color: #000; border: none; border-radius: 20px; z-index: 10000; font-weight: bold; cursor: pointer; }
     </style>
 </head>
 <body>
-    <button id="arBtn">START VISUAL</button>
+    <button id="arBtn">START AR</button>
     <audio id="audio" autoplay playsinline></audio>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
     <script src="https://unpkg.com/peerjs@1.3.1/dist/peerjs.min.js"></script>
     <script>
-        let scene, camera, renderer, mesh, xrRefSpace, geometries = [];
-        let macData = { low: 0, mid: 0, high: 0, trigger: false };
+        let scene, camera, renderer, mesh, xrRefSpace;
+        let geometries = [];
+        let macData = { low: 0, mid: 0, high: 0, trigger: false }; // 初期値を保証
         let currentIdx = 0, lastSwitch = 0, hue = 0;
         const audio = document.getElementById('audio');
 
-        // 1. Pre-generate Geometries (Ensures visual ready)
         for(let i=0; i<24; i++) {
-            geometries.push(new THREE.TorusKnotGeometry(0.4, 0.1 + (i*0.005), 100, 16, i+1, i+3));
+            geometries.push(new THREE.TorusKnotGeometry(0.4, 0.1, 100, 16, i+1, i+3));
         }
 
         const btn = document.getElementById('arBtn');
         btn.onclick = () => {
-            // Force audio context for Meta Quest
-            if (audio.srcObject) audio.play().catch(() => {});
-
-            navigator.xr.requestSession('immersive-ar', {
-                requiredFeatures: ['local-floor', 'hand-tracking']
-            }).then(session => {
-                btn.style.display = 'none';
-                startXR(session);
-            });
+            navigator.xr.requestSession('immersive-ar', { requiredFeatures: ['local-floor', 'hand-tracking'] })
+                .then(session => {
+                    btn.style.display = 'none';
+                    startXR(session);
+                });
         };
 
         function startXR(session) {
-            renderer = new THREE.WebGLRenderer({ antialias: false, alpha: true, powerPreference: "high-performance" });
+            renderer = new THREE.WebGLRenderer({ antialias: false, alpha: true });
             renderer.xr.enabled = true;
             renderer.setSize(window.innerWidth, window.innerHeight);
-            
             scene = new THREE.Scene();
             camera = new THREE.PerspectiveCamera(70, window.innerWidth/window.innerHeight, 0.01, 20);
             
-            mesh = new THREE.Mesh(geometries[0], new THREE.MeshBasicMaterial({ wireframe: true, color: 0x00ffff, transparent: true, opacity: 0.8 }));
+            mesh = new THREE.Mesh(geometries[0], new THREE.MeshBasicMaterial({ wireframe: true, color: 0x00ffff }));
             scene.add(mesh);
 
             session.requestReferenceSpace('local-floor').then(ref => {
                 xrRefSpace = ref;
                 renderer.xr.setSession(session);
-                
-                // Start communication in background
-                setTimeout(initPeer, 1000); 
-                
-                // Start Loop immediately
+                initPeer();
                 renderer.setAnimationLoop(render);
             });
         }
@@ -63,14 +54,17 @@
         function initPeer() {
             const peer = new Peer('quest-receiver');
             peer.on('connection', conn => {
-                conn.on('data', data => { macData = data; });
+                conn.on('data', data => {
+                    // データの安全な受信（欠損していても0を代入）
+                    macData.low = data.low || 0;
+                    macData.mid = data.mid || 0;
+                    macData.high = data.high || 0;
+                    macData.trigger = !!data.trigger;
+                });
             });
             peer.on('call', call => {
                 call.answer(new MediaStream());
-                call.on('stream', stream => {
-                    audio.srcObject = stream;
-                    audio.play();
-                });
+                call.on('stream', stream => { audio.srcObject = stream; audio.play(); });
             });
         }
 
@@ -78,8 +72,8 @@
             if (!frame || !xrRefSpace) return;
             hue += 0.005;
 
-            // Audio-Visual Sync
-            if (macData.trigger && Date.now() - lastSwitch > 500) {
+            // トリガーによる切り替え
+            if (macData.trigger && (Date.now() - lastSwitch > 500)) {
                 currentIdx = (currentIdx + 1) % geometries.length;
                 mesh.geometry = geometries[currentIdx];
                 lastSwitch = Date.now();
@@ -94,21 +88,26 @@
                     if (pose) {
                         handInView = true;
                         const p = pose.transform.position;
+                        // macData.high が NaN にならないよう安全に計算
                         mesh.position.lerp(new THREE.Vector3(p.x, p.y, p.z).add(look.multiplyScalar(0.05)), 0.2);
-                        mesh.rotation.y += 0.05 + macData.high;
+                        mesh.rotation.y += 0.05 + (macData.high * 0.5);
                     }
                 }
             }
 
-            // Fallback: stay in view if no hand
             if (!handInView) {
                 const center = new THREE.Vector3(0, 0, -0.8).applyQuaternion(camera.quaternion).add(camera.position);
                 mesh.position.lerp(center, 0.05);
                 mesh.rotation.y += 0.01;
             }
 
-            mesh.scale.setScalar(0.7 + macData.low * 2.5);
-            mesh.material.color.setHSL((hue + macData.mid) % 1, 1, 0.5);
+            // スケール計算にガードを入れる
+            const s = Math.max(0.1, 0.7 + (macData.low * 2.5));
+            mesh.scale.setScalar(s);
+            
+            const colorHue = (hue + (macData.mid * 0.5)) % 1;
+            mesh.material.color.setHSL(colorHue, 1, 0.5);
+            
             renderer.render(scene, camera);
         }
     </script>
