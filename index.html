@@ -2,22 +2,19 @@
 <html lang="ja">
 <head>
     <meta charset="UTF-8">
-    <title>Psychedelic XR - Hyper Performance</title>
+    <title>Psychedelic XR - Stability Focus</title>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
     <script src="https://unpkg.com/peerjs@1.3.1/dist/peerjs.min.js"></script>
     <style>
-        body { margin: 0; background: #000; overflow: hidden; font-family: sans-serif; }
-        #overlay { position: absolute; width: 100%; height: 100%; display: flex; flex-direction: column; justify-content: center; align-items: center; color: white; background: rgba(0,0,0,0.8); z-index: 100; }
-        button { padding: 30px 60px; font-size: 24px; background: #00ffff; color: black; border: none; border-radius: 50px; cursor: pointer; margin: 10px; font-weight: bold; }
+        body { margin: 0; background: #000; overflow: hidden; }
+        #overlay { position: absolute; width: 100%; height: 100%; display: flex; flex-direction: column; justify-content: center; align-items: center; color: white; background: rgba(0,0,0,0.8); z-index: 100; font-family: sans-serif; }
+        button { padding: 30px 60px; font-size: 24px; background: #00ffff; border: none; border-radius: 50px; cursor: pointer; font-weight: bold; }
     </style>
 </head>
 <body>
     <div id="overlay">
         <div id="status">Wait for Mac (psy-link-stable-mac)</div>
-        <div id="btnContainer" style="display:none;">
-            <button onclick="initXR('immersive-vr')">VR START</button>
-            <button onclick="initXR('immersive-ar')">AR START</button>
-        </div>
+        <button id="startBtn" style="display:none;">START XR</button>
     </div>
     <audio id="remoteAudio" autoplay></audio>
 
@@ -29,153 +26,138 @@
         let lastAutoSwitch = 0, hueBase = 0;
         const groups = { A: new THREE.Group(), B: new THREE.Group(), X: new THREE.Group(), Y: new THREE.Group() };
 
+        // ID固定
         const peer = new Peer('psy-link-stable-quest');
         peer.on('call', call => {
             call.answer(new MediaStream());
             call.on('stream', stream => {
                 document.getElementById('remoteAudio').srcObject = stream;
                 document.getElementById('status').innerText = "Connected!";
-                document.getElementById('btnContainer').style.display = "block";
+                document.getElementById('startBtn').style.display = "block";
                 window.remoteStream = stream;
             });
         });
 
-        window.initXR = async (mode) => {
+        document.getElementById('startBtn').onclick = () => initXR();
+
+        async function initXR() {
             audioCtx = new (window.AudioContext || window.webkitAudioContext)();
-            await audioCtx.resume();
             const source = audioCtx.createMediaStreamSource(window.remoteStream);
             analyzer = audioCtx.createAnalyser();
             analyzer.fftSize = 512;
             source.connect(analyzer);
             dataL = new Uint8Array(analyzer.frequencyBinCount);
             source.connect(audioCtx.destination);
+            
             document.getElementById('overlay').style.display = 'none';
-            setupThreeJS(mode);
-        };
 
-        function setupThreeJS(mode) {
             scene = new THREE.Scene();
             camera = new THREE.PerspectiveCamera(75, window.innerWidth/window.innerHeight, 0.1, 1000);
-            renderer = new THREE.WebGLRenderer({ antialias: false, alpha: true, powerPreference: "high-performance" });
+            renderer = new THREE.WebGLRenderer({ antialias: false, alpha: true });
             renderer.setSize(window.innerWidth, window.innerHeight);
             renderer.xr.enabled = true;
             document.body.appendChild(renderer.domElement);
-            navigator.xr.requestSession(mode, { optionalFeatures: ['local-floor'] }).then(s => renderer.xr.setSession(s));
+            
+            // モード切替時に一瞬止まらないよう事前に全構築
+            setupAllModes();
+            Object.values(groups).forEach(g => scene.add(g));
+            switchM('Y');
 
-            // モード構築
-            createA(); createB(); createX(); createY();
-            Object.values(groups).forEach(g => { g.visible = false; scene.add(g); });
-            groups.Y.visible = true;
-            animate();
+            // ARモードをデフォルトで要求
+            const sessionInit = { optionalFeatures: ['local-floor', 'bounded-floor'] };
+            navigator.xr.requestSession('immersive-ar', sessionInit).then(s => renderer.xr.setSession(s));
+
+            renderer.setAnimationLoop(render);
         }
 
-        // --- A: DNA-Vortex (二重螺旋の光の奔流) ---
-        function createA() {
-            const count = 300;
-            const geo = new THREE.SphereGeometry(0.3, 8, 8);
-            for(let i=0; i<count; i++) {
-                const mesh = new THREE.Mesh(geo, new THREE.MeshBasicMaterial());
-                groups.A.add(mesh);
+        function setupAllModes() {
+            // Y: 改良型スペクトラム・リング（さらに中央まで）
+            for(let j=0; j<40; j++) {
+                const geo = new THREE.BufferGeometry().setAttribute('position', new THREE.BufferAttribute(new Float32Array(128*3), 3));
+                groups.Y.add(new THREE.LineLoop(geo, new THREE.LineBasicMaterial({transparent: true, opacity: 0.8})));
             }
-        }
-
-        // --- B: Electric Trails (各線が独立した色を持つ) ---
-        function createB() {
-            for(let i=0; i<15; i++) {
-                const geo = new THREE.TorusGeometry(10 + i, 0.05, 16, 100);
-                const mat = new THREE.MeshBasicMaterial({ transparent: true });
-                groups.B.add(new THREE.Mesh(geo, mat));
+            // B: 復刻版レインボー・リング
+            for(let i=0; i<20; i++) {
+                const ring = new THREE.Mesh(new THREE.TorusGeometry(5 + i, 0.1, 8, 50), new THREE.MeshBasicMaterial({wireframe: true}));
+                ring.position.z = -i * 5;
+                groups.B.add(ring);
             }
-        }
-
-        // --- X: Hyper Cubes (全方位カオス) ---
-        function createX() {
-            for(let i=0; i<100; i++) {
-                const mesh = new THREE.Mesh(new THREE.BoxGeometry(1.5, 1.5, 1.5), new THREE.MeshBasicMaterial({wireframe: true}));
-                mesh.position.set((Math.random()-0.5)*80, (Math.random()-0.5)*80, (Math.random()-0.5)*80);
-                groups.X.add(mesh);
+            // X: 復刻版カオス・キューブ
+            for(let i=0; i<80; i++) {
+                const cube = new THREE.Mesh(new THREE.BoxGeometry(2,2,2), new THREE.MeshBasicMaterial({wireframe: true}));
+                cube.position.set((Math.random()-0.5)*100, (Math.random()-0.5)*100, -Math.random()*100);
+                groups.X.add(cube);
             }
+            // A: 新・光の粒子トンネル（低負荷サイケ）
+            const pGeo = new THREE.BufferGeometry();
+            const pPos = new Float32Array(1000 * 3);
+            for(let i=0; i<1000*3; i++) pPos[i] = (Math.random()-0.5)*100;
+            pGeo.setAttribute('position', new THREE.BufferAttribute(pPos, 3));
+            groups.A.add(new THREE.Points(pGeo, new THREE.PointsMaterial({size: 0.5, transparent: true})));
         }
 
-        // --- Y: Spectrum Rings (中央まで埋め尽くす) ---
-        function createY() {
-            for(let j=0; j<50; j++) {
-                const geo = new THREE.BufferGeometry();
-                geo.setAttribute('position', new THREE.BufferAttribute(new Float32Array(128 * 3), 3));
-                groups.Y.add(new THREE.LineLoop(geo, new THREE.LineBasicMaterial({transparent: true})));
+        function render() {
+            const session = renderer.xr.getSession();
+            if (session) {
+                for (const source of session.inputSources) {
+                    const b = source.gamepad.buttons;
+                    if (source.handedness === 'right') {
+                        if (b[4]?.pressed) switchM('A');
+                        if (b[5]?.pressed) switchM('B');
+                        isRightTrigger = b[0]?.pressed;
+                    } else {
+                        if (b[4]?.pressed) switchM('X');
+                        if (b[5]?.pressed) switchM('Y');
+                        if (b[0]?.pressed && Date.now() - lastAutoSwitch > 500) { autoMode = !autoMode; lastAutoSwitch = Date.now(); }
+                    }
+                }
             }
-        }
 
-        function animate() {
-            renderer.setAnimationLoop(() => {
-                const session = renderer.xr.getSession();
-                if (session) {
-                    for (const source of session.inputSources) {
-                        const b = source.gamepad.buttons;
-                        if (source.handedness === 'right') {
-                            if (b[4]?.pressed) switchM('A');
-                            if (b[5]?.pressed) switchM('B');
-                            isRightTrigger = b[0]?.pressed;
-                        } else {
-                            if (b[4]?.pressed) switchM('X');
-                            if (b[5]?.pressed) switchM('Y');
-                            if (b[0]?.pressed && Date.now() - lastAutoSwitch > 500) { autoMode = !autoMode; lastAutoSwitch = Date.now(); }
+            if (analyzer) {
+                analyzer.getByteFrequencyData(dataL);
+                const low = dataL[5]/255, mid = dataL[20]/255, high = dataL[60]/255;
+                hueBase += 0.003;
+
+                if ((autoMode || isRightTrigger) && low > 0.8 && Date.now() - lastAutoSwitch > 300) {
+                    switchM(['A','B','X','Y'][Math.floor(Math.random()*4)]);
+                    lastAutoSwitch = Date.now();
+                }
+
+                if (currentMode === 'Y') {
+                    groups.Y.children.forEach((l, j) => {
+                        const pos = l.geometry.attributes.position.array;
+                        const rBase = j * 0.5;
+                        for(let i=0; i<128; i++) {
+                            const a = (i/128)*Math.PI*2;
+                            const r = rBase + (dataL[i%64]/255) * (j*0.2 + 3);
+                            pos[i*3] = Math.cos(a)*r; pos[i*3+1] = Math.sin(a)*r; pos[i*3+2] = -j*4;
                         }
-                    }
+                        l.geometry.attributes.position.needsUpdate = true;
+                        l.material.color.setHSL((hueBase + j*0.02)%1, 1, 0.5);
+                    });
+                } else if (currentMode === 'B') {
+                    groups.B.children.forEach((m, i) => {
+                        const s = 1 + (dataL[i*5%64]/255)*3;
+                        m.scale.set(s, s, 1);
+                        m.rotation.z += 0.01;
+                        m.material.color.setHSL((hueBase + i*0.05)%1, 1, 0.5);
+                    });
+                } else if (currentMode === 'X') {
+                    groups.X.children.forEach((m, i) => {
+                        m.position.z += 0.5 + low*2;
+                        if(m.position.z > 10) m.position.z = -100;
+                        m.rotation.x += 0.02; m.rotation.y += 0.02;
+                        m.material.color.setHSL((hueBase + i*0.02)%1, 1, 0.5);
+                    });
+                } else if (currentMode === 'A') {
+                    const points = groups.A.children[0];
+                    points.rotation.z += 0.005 + high*0.05;
+                    points.material.size = 0.2 + low*2;
+                    points.material.color.setHSL(hueBase%1, 1, 0.5);
+                    points.position.z = (points.position.z + 0.1 + low) % 50;
                 }
-
-                if (analyzer) {
-                    analyzer.getByteFrequencyData(dataL);
-                    const low = dataL[5]/255, mid = dataL[20]/255, high = dataL[60]/255;
-                    hueBase += 0.003;
-
-                    if ((autoMode || isRightTrigger) && low > 0.8 && Date.now() - lastAutoSwitch > 300) {
-                        switchM(['A','B','X','Y'][Math.floor(Math.random()*4)]);
-                        lastAutoSwitch = Date.now();
-                    }
-
-                    if (currentMode === 'Y') {
-                        groups.Y.children.forEach((l, j) => {
-                            const pos = l.geometry.attributes.position.array;
-                            const rBase = j * 0.4;
-                            for(let i=0; i<128; i++) {
-                                const a = (i/128)*Math.PI*2;
-                                const distort = (dataL[i%64]/255) * (j * 0.3 + 2);
-                                pos[i*3] = Math.cos(a)*(rBase + distort);
-                                pos[i*3+1] = Math.sin(a)*(rBase + distort);
-                                pos[i*3+2] = -j * 3;
-                            }
-                            l.geometry.attributes.position.needsUpdate = true;
-                            l.material.color.setHSL((hueBase + j*0.02)%1, 1, 0.5);
-                            l.material.opacity = 1.0 - (j/50);
-                        });
-                    } else if (currentMode === 'A') {
-                        groups.A.children.forEach((m, i) => {
-                            const t = Date.now() * 0.001 + i;
-                            const r = 10 + low * 20;
-                            m.position.set(Math.cos(t)*r, Math.sin(t*0.5)*r, -i*2 + (low*50));
-                            m.scale.setScalar(0.5 + dataL[i%50]/100);
-                            m.material.color.setHSL((hueBase + i*0.01)%1, 1, 0.5);
-                        });
-                    } else if (currentMode === 'B') {
-                        groups.B.children.forEach((m, i) => {
-                            const s = 1 + (dataL[i*5%128]/255) * 4;
-                            m.scale.set(s, s, 1);
-                            m.rotation.z += 0.01 + high*0.1;
-                            m.material.color.setHSL((hueBase + i*0.07)%1, 1, 0.5);
-                        });
-                    } else if (currentMode === 'X') {
-                        groups.X.children.forEach((m, i) => {
-                            m.rotation.x += 0.02 + low*0.1;
-                            m.rotation.y += mid*0.1;
-                            m.position.x += Math.sin(hueBase + i) * mid;
-                            m.position.z += Math.cos(hueBase + i) * mid;
-                            m.material.color.setHSL((hueBase + i*0.1)%1, 1, 0.5);
-                        });
-                    }
-                }
-                renderer.render(scene, camera);
-            });
+            }
+            renderer.render(scene, camera);
         }
 
         function switchM(m) {
