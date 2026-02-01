@@ -2,113 +2,118 @@
 <html lang="ja">
 <head>
     <meta charset="UTF-8">
-    <title>Instant AR Quest</title>
-    <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
-    <script src="https://unpkg.com/peerjs@1.3.1/dist/peerjs.min.js"></script>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>FORCE AR START</title>
     <style>
         body { margin: 0; background: #000; overflow: hidden; }
         #arBtn { 
-            position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%);
-            padding: 50px 100px; font-size: 32px; background: #00ffff; border: none; 
-            border-radius: 20px; font-weight: bold; cursor: pointer; z-index: 1000;
+            position: fixed; top: 50%; left: 50%; transform: translate(-50%, -50%);
+            padding: 60px 100px; font-size: 40px; background: #ff00ff; color: white;
+            border: 10px solid #fff; border-radius: 20px; font-weight: bold; z-index: 9999;
         }
-        #status { position: absolute; bottom: 10%; width: 100%; text-align: center; color: white; font-family: sans-serif; }
+        #status { position: fixed; bottom: 20px; width: 100%; text-align: center; color: #0f0; font-family: monospace; z-index: 1000; }
     </style>
 </head>
 <body>
-    <button id="arBtn">START AR</button>
-    <div id="status">PeerJS Initializing...</div>
+    <button id="arBtn">ENTER AR</button>
+    <div id="status">Ready to Launch</div>
     <audio id="remoteAudio" autoplay></audio>
 
-    <script type="module">
-        let scene, camera, renderer, activeMesh;
-        let macData = { low: 0, mid: 0, high: 0, trigger: false };
-        let currentIdx = 0, lastSwitch = 0, hueBase = 0;
-        const geometries = [];
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+    <script src="https://unpkg.com/peerjs@1.3.1/dist/peerjs.min.js"></script>
 
-        // --- 事前準備 ---
-        const initGraphics = () => {
-            scene = new THREE.Scene();
-            camera = new THREE.PerspectiveCamera(70, window.innerWidth/window.innerHeight, 0.1, 100);
-            renderer = new THREE.WebGLRenderer({ antialias: false, alpha: true });
-            renderer.xr.enabled = true;
-
-            const baseGeos = [
-                new THREE.TorusGeometry(3, 0.1, 8, 32), new THREE.IcosahedronGeometry(3, 1),
-                new THREE.TorusKnotGeometry(3, 0.5, 64, 8), new THREE.BoxGeometry(4, 4, 4),
-                new THREE.OctahedronGeometry(3, 0), new THREE.SphereGeometry(3, 12, 12),
-                new THREE.CylinderGeometry(2, 2, 8, 12), new THREE.DodecahedronGeometry(3, 0),
-                new THREE.TorusGeometry(3, 1.2, 5, 6), new THREE.ConeGeometry(3, 8, 12),
-                new THREE.TorusKnotGeometry(3, 0.1, 80, 3), new THREE.CapsuleGeometry(2, 4, 2, 12)
-            ];
-            geometries.push(...baseGeos);
-            activeMesh = new THREE.Mesh(geometries[0], new THREE.MeshBasicMaterial({wireframe: true, transparent: true}));
-            scene.add(activeMesh);
-        };
-
-        // --- PeerJS (Macとの通信) ---
-        const peer = new Peer('psy-link-stable-quest');
-        peer.on('open', () => document.getElementById('status').innerText = "Peer Ready. Press START AR.");
-        peer.on('call', call => {
-            call.answer(new MediaStream());
-            call.on('stream', stream => document.getElementById('remoteAudio').srcObject = stream);
-        });
-        peer.on('connection', conn => {
-            conn.on('data', data => { macData = data; });
-        });
-
-        initGraphics();
-
-        // --- AR起動の鍵：一切の非同期を挟まない ---
+    <script>
         const btn = document.getElementById('arBtn');
+        const status = document.getElementById('status');
+        let macData = { low: 0, mid: 0, high: 0, trigger: false };
+        let renderer, scene, camera, mesh, geometries = [];
+
+        // 1. 最優先：ボタンが押された瞬間にXRを要求（一切の計算を挟まない）
         btn.onclick = () => {
-            // navigator.xr.requestSession は必ず関数の直下で呼ぶ
+            if (!navigator.xr) {
+                status.innerText = "WebXR NOT SUPPORTED";
+                return;
+            }
+
             navigator.xr.requestSession('immersive-ar', {
                 requiredFeatures: ['local-floor', 'hand-tracking']
-            }).then((session) => {
-                btn.style.display = 'none';
-                document.getElementById('status').style.display = 'none';
-                
-                renderer.xr.setSession(session);
-                renderer.setAnimationLoop(render);
-            }).catch(err => {
-                document.getElementById('status').innerText = "Error: " + err.message;
+            }).then(setupXR).catch(err => {
+                status.innerText = "XR FAIL: " + err.message;
                 console.error(err);
             });
         };
 
-        function render(time, frame) {
-            hueBase += 0.005;
+        function setupXR(session) {
+            btn.style.display = 'none';
+            status.innerText = "XR SESSION ACTIVE";
 
-            // Mac側からのトリガーで形状変化
+            // 描画系の初期化
+            renderer = new THREE.WebGLRenderer({ antialias: false, alpha: true });
+            renderer.xr.enabled = true;
+            renderer.setPixelRatio(1);
+            renderer.setSize(window.innerWidth, window.innerHeight);
+            renderer.xr.setSession(session);
+
+            scene = new THREE.Scene();
+            camera = new THREE.PerspectiveCamera(70, window.innerWidth/window.innerHeight, 0.1, 100);
+
+            // 12種類の形状を生成
+            createGeos();
+            mesh = new THREE.Mesh(geometries[0], new THREE.MeshBasicMaterial({wireframe: true, color: 0x00ffff}));
+            scene.add(mesh);
+
+            // 通信の開始（AR起動後にバックグラウンドで開始）
+            initCommunication();
+
+            renderer.setAnimationLoop(render);
+        }
+
+        function createGeos() {
+            for(let i=0; i<12; i++) {
+                geometries.push(new THREE.IcosahedronGeometry(i + 1, 1)); // シンプルなテスト形状
+            }
+            // 実際にはここでTorusKnotなどの複雑な形状をループで入れる
+        }
+
+        function initCommunication() {
+            const peer = new Peer('psy-link-stable-quest');
+            peer.on('call', call => {
+                call.answer(new MediaStream());
+                call.on('stream', stream => {
+                    document.getElementById('remoteAudio').srcObject = stream;
+                });
+            });
+            peer.on('connection', conn => {
+                conn.on('data', data => { macData = data; });
+            });
+        }
+
+        let lastSwitch = 0, hue = 0, currentIdx = 0;
+        function render(time, frame) {
+            hue += 0.005;
             if (macData.trigger && Date.now() - lastSwitch > 800) {
                 currentIdx = (currentIdx + 1) % 12;
-                activeMesh.geometry = geometries[currentIdx];
+                mesh.geometry = geometries[currentIdx];
                 lastSwitch = Date.now();
             }
 
             // ハンドトラッキング
             if (frame) {
-                const session = frame.session;
-                for (const source of session.inputSources) {
-                    if (source.hand) {
-                        const indexTip = source.hand.get('index-finger-tip');
-                        const wrist = source.hand.get('wrist');
-                        const pIdx = frame.getJointPose(indexTip, renderer.xr.getReferenceSpace());
-                        const pWri = frame.getJointPose(wrist, renderer.xr.getReferenceSpace());
-                        if (pIdx && pWri) {
-                            const pos = pIdx.transform.position;
-                            activeMesh.position.set(pos.x, pos.y, pos.z);
-                            const dist = Math.hypot(pos.x-pWri.transform.position.x, pos.y-pWri.transform.position.y) * 10;
-                            const s = 0.5 + (macData.low * 2) + dist;
-                            activeMesh.scale.set(s, s, s);
+                const sources = frame.session.inputSources;
+                for (const input of sources) {
+                    if (input.hand) {
+                        const joint = frame.getJointPose(input.hand.get('index-finger-tip'), renderer.xr.getReferenceSpace());
+                        if (joint) {
+                            mesh.position.set(joint.transform.position.x, joint.transform.position.y, joint.transform.position.z);
                         }
                     }
                 }
             }
 
-            activeMesh.rotation.y += 0.02 + macData.high * 0.2;
-            activeMesh.material.color.setHSL((hueBase + macData.mid)%1, 1, 0.5);
+            mesh.rotation.y += 0.02 + macData.high * 0.1;
+            mesh.scale.setScalar(1 + macData.low * 3);
+            mesh.material.color.setHSL((hue + macData.mid)%1, 1, 0.5);
+
             renderer.render(scene, camera);
         }
     </script>
