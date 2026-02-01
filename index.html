@@ -2,105 +2,76 @@
 <html lang="ja">
 <head>
     <meta charset="UTF-8">
-    <title>VR Tunnel - Ninja Final</title>
+    <title>VR Tunnel - Final Sync</title>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+    <script src="https://unpkg.com/peerjs@1.3.1/dist/peerjs.min.js"></script>
     <style>
         body { margin: 0; background: #000; overflow: hidden; font-family: sans-serif; }
         #overlay { position: absolute; top: 0; left: 0; width: 100%; height: 100%; display: flex; flex-direction: column; justify-content: center; align-items: center; color: white; background: #000; z-index: 100; }
-        input { padding: 15px; font-size: 18px; border-radius: 10px; margin: 10px; width: 280px; text-align: center; border: 2px solid #00ffff; background: #222; color: #fff; }
-        button { padding: 20px 40px; font-size: 20px; background: #00ffff; border: none; border-radius: 50px; cursor: pointer; font-weight: bold; }
+        button { padding: 25px 50px; font-size: 22px; background: #00ffff; border: none; border-radius: 50px; cursor: pointer; font-weight: bold; }
     </style>
 </head>
 <body>
     <div id="overlay">
-        <h1>VR連動 (Digital Ninja)</h1>
-        <input type="text" id="ninjaId" placeholder="VDO.ninjaのIDを入力">
-        <button id="startBtn">VR連動を開始</button>
-        <p id="status">Questのマイク音は無視されます</p>
+        <h1>VR連動 (デジタル直結)</h1>
+        <button id="startBtn">接続してVR起動</button>
+        <p id="status">Mac側で先に「配信開始」を押してください</p>
     </div>
 
     <script type="module">
         import { VRButton } from 'https://unpkg.com/three@0.128.0/examples/jsm/webxr/VRButton.js';
 
-        let scene, camera, renderer, analyzer, dataArray, audioCtx;
-        let tunnel, particles;
+        let scene, analyzer, dataArray, audioCtx;
+        let tunnel;
+        const peer = new Peer(); // Quest側のIDは自動
 
-        function initThreeJS() {
-            scene = new THREE.Scene();
-            camera = new THREE.PerspectiveCamera(90, window.innerWidth / window.innerHeight, 0.1, 1000);
-            renderer = new THREE.WebGLRenderer({ antialias: true });
-            renderer.setSize(window.innerWidth, window.innerHeight);
-            renderer.xr.enabled = true;
-            document.body.appendChild(renderer.domElement);
-            document.body.appendChild(VRButton.createButton(renderer));
+        // VRシーン準備
+        scene = new THREE.Scene();
+        const camera = new THREE.PerspectiveCamera(90, window.innerWidth/window.innerHeight, 0.1, 1000);
+        const renderer = new THREE.WebGLRenderer({ antialias: true });
+        renderer.setSize(window.innerWidth, window.innerHeight);
+        renderer.xr.enabled = true;
+        document.body.appendChild(renderer.domElement);
+        document.body.appendChild(VRButton.createButton(renderer));
 
-            const tunnelGeom = new THREE.CylinderGeometry(30, 30, 500, 64, 1, true);
-            tunnel = new THREE.Mesh(tunnelGeom, new THREE.MeshBasicMaterial({ color: 0xff00ff, wireframe: true }));
-            tunnel.rotation.x = Math.PI / 2;
-            scene.add(tunnel);
+        const tunnelGeom = new THREE.CylinderGeometry(30, 30, 500, 32, 1, true);
+        tunnel = new THREE.Mesh(tunnelGeom, new THREE.MeshBasicMaterial({ color: 0xff00ff, wireframe: true }));
+        tunnel.rotation.x = Math.PI / 2;
+        scene.add(tunnel);
 
-            const pGeom = new THREE.BufferGeometry();
-            const pPos = new Float32Array(10000 * 3);
-            for(let i=0; i<pPos.length; i++) pPos[i] = (Math.random() - 0.5) * 400;
-            pGeom.setAttribute('position', new THREE.BufferAttribute(pPos, 3));
-            particles = new THREE.Points(pGeom, new THREE.PointsMaterial({ size: 0.2, color: 0x00ffff }));
-            scene.add(particles);
-
-            animate();
-        }
-
-        async function connectAudio() {
-            const id = document.getElementById('ninjaId').value;
-            if(!id) return;
-
+        async function start() {
+            // Questの音声制限を解除
             audioCtx = new (window.AudioContext || window.webkitAudioContext)();
             await audioCtx.resume();
 
-            // --- 秘策: VDO.ninjaの音声をHTML要素として生成し、直接解析する ---
-            const audio = new Audio();
-            audio.crossOrigin = "anonymous";
-            // エコーキャンセル等のノイズ除去を一切行わない生データを要求
-            audio.src = `https://vdo.ninja/api/?view=${id}&autoplay&audioonly&cleanoutput&noecho=1`;
-            
-            audio.oncanplaythrough = () => {
-                audio.play();
-                const source = audioCtx.createMediaElementSource(audio);
+            // Mac(mac-digital-link)に接続
+            // 自分のマイクは送らない(空のストリーム)
+            const call = peer.call('mac-digital-link', new MediaStream());
+
+            call.on('stream', (remoteStream) => {
+                // 受信した音を解析
+                const source = audioCtx.createMediaStreamSource(remoteStream);
                 analyzer = audioCtx.createAnalyser();
                 analyzer.fftSize = 256;
                 source.connect(analyzer);
-                source.connect(audioCtx.destination);
+                source.connect(audioCtx.destination); // スピーカーに接続
                 
                 dataArray = new Uint8Array(analyzer.frequencyBinCount);
                 document.getElementById('overlay').style.display = 'none';
-            };
-
-            // エラー時
-            audio.onerror = () => { alert("IDが正しくないか、通信エラーです。"); };
-        }
-
-        function animate() {
-            renderer.setAnimationLoop(() => {
-                if (analyzer) {
-                    analyzer.getByteFrequencyData(dataArray);
-                    // 感度を限界までブースト (10倍)
-                    const bass = (dataArray[10] / 255) * 10;
-                    tunnel.scale.set(1 + bass, 1, 1 + bass);
-                    tunnel.rotation.y += 0.01;
-                    const pos = particles.geometry.attributes.position.array;
-                    for (let i = 2; i < pos.length; i += 3) {
-                        pos[i] += 0.5 + bass * 15;
-                        if (pos[i] > 200) pos[i] = -200;
-                    }
-                    particles.geometry.attributes.position.needsUpdate = true;
-                }
-                renderer.render(scene, camera);
             });
         }
 
-        document.getElementById('startBtn').onclick = () => {
-            initThreeJS();
-            connectAudio();
-        };
+        renderer.setAnimationLoop(() => {
+            if (analyzer) {
+                analyzer.getByteFrequencyData(dataArray);
+                const volume = (dataArray[10] / 255) * 6; // 感度調整
+                tunnel.scale.set(1 + volume, 1, 1 + volume);
+                tunnel.rotation.y += 0.01;
+            }
+            renderer.render(scene, camera);
+        });
+
+        document.getElementById('startBtn').onclick = start;
     </script>
 </body>
 </html>
