@@ -2,82 +2,86 @@
 <html lang="en">
 <head>
     <meta charset="UTF-8">
-    <title>Psy-XR IRONCLAD</title>
+    <title>Quest Psy-XR Final</title>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
     <script src="https://unpkg.com/peerjs@1.3.1/dist/peerjs.min.js"></script>
     <style>
-        body { margin: 0; background: #000; overflow: hidden; font-family: monospace; }
-        #ui { position: fixed; top: 0; left: 0; width: 100%; height: 100%; display: flex; flex-direction: column; justify-content: center; align-items: center; background: rgba(0,0,0,1); z-index: 9999; }
-        #arBtn { padding: 40px 80px; font-size: 32px; background: #222; color: #fff; border: 4px solid #fff; border-radius: 15px; cursor: pointer; }
-        #arBtn.active { background: #00ffff; color: #000; border: 4px solid #fff; }
-        #status { color: #0f0; margin-top: 20px; font-size: 16px; text-align: center; }
+        body { margin: 0; background: #000; overflow: hidden; font-family: sans-serif; }
+        #ui { position: fixed; top: 0; left: 0; width: 100%; height: 100%; display: flex; flex-direction: column; justify-content: center; align-items: center; background: #000; z-index: 1000; }
+        #arBtn { padding: 40px 60px; font-size: 30px; background: #555; color: #fff; border: none; border-radius: 20px; cursor: not-allowed; }
+        #arBtn.active { background: #00ffff; color: #000; cursor: pointer; box-shadow: 0 0 30px #00ffff; }
+        #status { color: #0f0; margin-top: 20px; font-size: 18px; text-align: center; }
     </style>
 </head>
 <body>
     <div id="ui">
-        <button id="arBtn">WAITING FOR MAC...</button>
-        <div id="status">INIT PEER...</div>
+        <button id="arBtn" disabled>WAITING FOR MAC...</button>
+        <div id="status">INITIALIZING...</div>
     </div>
-    <audio id="remoteAudio" autoplay></audio>
+    <audio id="remoteAudio" autoplay playsinline></audio>
 
     <script>
         const btn = document.getElementById('arBtn');
         const status = document.getElementById('status');
+        const audio = document.getElementById('remoteAudio');
         let macData = { low: 0, mid: 0, high: 0, trigger: false };
         let renderer, scene, camera, mesh, geometries = [];
-        let currentIdx = 0, lastSwitch = 0, hue = 0;
+        let currentIdx = 0, lastSwitch = 0, hue = 0, xrRefSpace;
 
-        // --- 1. Peer Setup (Immediate) ---
+        // --- 1. 通信の設定 ---
         const peer = new Peer('quest-receiver');
-        peer.on('open', (id) => { status.innerText = "Target ID: quest-receiver\nCONNECT FROM MAC"; });
+        peer.on('open', () => status.innerText = "1. START MAC SENDER NOW");
         peer.on('connection', conn => {
-            status.innerText = "MAC CONNECTED!";
-            btn.innerText = "ENTER AR";
-            btn.classList.add('active');
+            status.innerText = "MAC CONNECTED!\n2. CLICK 'START AR' BELOW";
+            btn.disabled = false; btn.classList.add('active'); btn.innerText = "START AR";
             conn.on('data', data => { macData = data; });
         });
         peer.on('call', call => {
             call.answer(new MediaStream());
-            call.on('stream', s => { document.getElementById('remoteAudio').srcObject = s; });
+            call.on('stream', stream => { audio.srcObject = stream; });
         });
 
-        // --- 2. Graphics Setup (Hidden until AR starts) ---
-        function initGraphics() {
+        // --- 2. 描画の設定 ---
+        function initThree() {
             scene = new THREE.Scene();
-            camera = new THREE.PerspectiveCamera(70, window.innerWidth / window.innerHeight, 0.01, 20);
-
+            camera = new THREE.PerspectiveCamera(70, window.innerWidth/window.innerHeight, 0.01, 20);
             renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
-            renderer.setPixelRatio(window.devicePixelRatio);
-            renderer.setSize(window.innerWidth, window.innerHeight);
             renderer.xr.enabled = true;
+            renderer.setSize(window.innerWidth, window.innerHeight);
 
-            // Geometry generation
+            // 12種類の形を準備
             geometries = [
-                new THREE.TorusKnotGeometry(0.3, 0.1, 128, 16),
-                new THREE.IcosahedronGeometry(0.4, 1),
-                new THREE.TorusGeometry(0.4, 0.05, 16, 64)
+                new THREE.TorusKnotGeometry(0.4, 0.1, 100, 16),
+                new THREE.IcosahedronGeometry(0.5, 1),
+                new THREE.TorusGeometry(0.5, 0.1, 16, 100),
+                new THREE.BoxGeometry(0.6, 0.6, 0.6, 5, 5, 5),
+                new THREE.TorusKnotGeometry(0.5, 0.05, 150, 20, 2, 3),
+                new THREE.SphereGeometry(0.5, 32, 16),
+                new THREE.DodecahedronGeometry(0.5, 0),
+                new THREE.OctahedronGeometry(0.5, 2),
+                new THREE.TorusGeometry(0.5, 0.2, 12, 48),
+                new THREE.CapsuleGeometry(0.3, 0.6, 4, 12),
+                new THREE.ConeGeometry(0.5, 1, 32, 10, true),
+                new THREE.TorusKnotGeometry(0.4, 0.2, 64, 8, 3, 4)
             ];
-            mesh = new THREE.Mesh(geometries[0], new THREE.MeshBasicMaterial({ wireframe: true, transparent: true, opacity: 0.8 }));
-            mesh.position.set(0, 1.2, -0.5); // 50cm in front of you
+            mesh = new THREE.Mesh(geometries[0], new THREE.MeshBasicMaterial({wireframe: true, transparent: true, opacity: 0.8}));
+            mesh.position.set(0, 1.2, -0.6); // 目の前に出す
             scene.add(mesh);
         }
 
-        // --- 3. AR Entry (Synchronous Execution) ---
+        // --- 3. ボタンを押した時の動き ---
         btn.onclick = async () => {
-            if (!renderer) initGraphics();
+            if (!renderer) initThree();
             
-            try {
-                const session = await navigator.xr.requestSession('immersive-ar', {
-                    requiredFeatures: ['local-floor', 'hand-tracking']
-                });
-                
-                await renderer.xr.setSession(session);
+            // 音を出す許可をブラウザにもらう
+            audio.play().catch(() => {});
+
+            if (navigator.xr) {
+                const session = await navigator.xr.requestSession('immersive-ar', { requiredFeatures: ['local-floor', 'hand-tracking'] });
+                renderer.xr.setSession(session);
+                xrRefSpace = await session.requestReferenceSpace('local-floor');
                 document.getElementById('ui').style.display = 'none';
-                
-                // FORCE THE RENDER LOOP
                 renderer.setAnimationLoop(render);
-            } catch (e) {
-                status.innerText = "XR ERROR: " + e.message;
             }
         };
 
@@ -85,20 +89,19 @@
             if (!frame) return;
             hue += 0.005;
 
-            // Mode switch on trigger
-            if (macData.trigger && (Date.now() - lastSwitch > 700)) {
+            // 音に合わせて形を変える
+            if (macData.trigger && (Date.now() - lastSwitch > 600)) {
                 currentIdx = (currentIdx + 1) % geometries.length;
                 mesh.geometry = geometries[currentIdx];
                 lastSwitch = Date.now();
             }
 
-            // Hand Tracking
+            // ハンドトラッキング（指先に吸い付く）
             const session = frame.session;
-            const refSpace = renderer.xr.getReferenceSpace();
             for (const input of session.inputSources) {
                 if (input.hand) {
-                    const tip = input.hand.get('index-finger-tip');
-                    const pose = frame.getJointPose(tip, refSpace);
+                    const joint = input.hand.get('index-finger-tip');
+                    const pose = frame.getJointPose(joint, xrRefSpace);
                     if (pose) {
                         mesh.position.lerp(new THREE.Vector3().copy(pose.transform.position), 0.2);
                         mesh.quaternion.slerp(new THREE.Quaternion().copy(pose.transform.orientation), 0.1);
@@ -106,11 +109,11 @@
                 }
             }
 
-            // Fallback Animation
-            mesh.rotation.y += 0.01;
-            mesh.scale.setScalar(1 + (macData.low * 2));
+            // 音に合わせて色と大きさを変える
+            mesh.scale.setScalar(1 + (macData.low * 2.5));
             mesh.material.color.setHSL((hue + macData.mid) % 1, 0.8, 0.5);
-            
+            mesh.material.opacity = 0.4 + (macData.low * 0.6);
+
             renderer.render(scene, camera);
         }
     </script>
