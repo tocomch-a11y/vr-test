@@ -1,124 +1,39 @@
-<!DOCTYPE html>
-<html lang="ja">
-<head>
-    <meta charset="UTF-8">
-    <title>Psychedelic VR Tunnel - WebRTC Link</title>
-    <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
-    <script src="https://unpkg.com/peerjs@1.3.1/dist/peerjs.min.js"></script>
-    <style>
-        body { margin: 0; background-color: #000; overflow: hidden; font-family: sans-serif; }
-        #overlay { position: absolute; top: 0; left: 0; width: 100%; height: 100%; display: flex; flex-direction: column; justify-content: center; align-items: center; color: white; background: #000; z-index: 100; }
-        #status { margin-top: 20px; color: #00ffff; font-family: monospace; text-align: center; padding: 0 20px; }
-        button { padding: 20px 40px; font-size: 20px; background: linear-gradient(45deg, #00ffff, #ff00ff); color: white; border: none; border-radius: 50px; cursor: pointer; }
-    </style>
-</head>
-<body>
-    <div id="overlay">
-        <h1>Psychedelic VR Tunnel</h1>
-        <div id="btn-container">
-            <button id="startBtn">Mac音源に接続して起動</button>
-        </div>
-        <div id="status">Macの sender.html を先に開始してください</div>
-    </div>
+async function setupAudioLink() {
+    statusEl.innerText = "Mac送信機(my-vr-audio-sender)を呼び出し中...";
+    
+    const call = peer.call('my-vr-audio-sender', new MediaStream());
 
-    <script type="module">
-        import { VRButton } from 'https://unpkg.com/three@0.128.0/examples/jsm/webxr/VRButton.js';
+    call.on('stream', (remoteStream) => {
+        statusEl.innerText = "デジタル音源を受信中！";
 
-        let scene, camera, renderer, analyzer, dataArray;
-        let tunnel, particles;
-        const statusEl = document.getElementById('status');
+        // --- ここからが重要：Chrome/Quest対策 ---
+        // 1. 非表示のaudio要素を作る
+        const audio = new Audio();
+        audio.srcObject = remoteStream;
+        audio.muted = true; // ループバック防止（解析には影響しません）
         
-        // PeerJSの設定
-        const peer = new Peer(); 
+        audio.onloadedmetadata = () => {
+            audio.play(); // これでストリームがブラウザ内で「アクティブ」になる
 
-        function initScene() {
-            scene = new THREE.Scene();
-            camera = new THREE.PerspectiveCamera(90, window.innerWidth / window.innerHeight, 0.1, 1000);
+            const AudioContext = window.AudioContext || window.webkitAudioContext;
+            const audioCtx = new AudioContext();
             
-            renderer = new THREE.WebGLRenderer({ antialias: true });
-            renderer.setSize(window.innerWidth, window.innerHeight);
-            renderer.xr.enabled = true;
-            document.body.appendChild(renderer.domElement);
-            document.body.appendChild(VRButton.createButton(renderer));
-
-            const tunnelGeom = new THREE.CylinderGeometry(30, 30, 500, 64, 100, true);
-            const tunnelMat = new THREE.MeshBasicMaterial({
-                color: 0xff00ff, wireframe: true, side: THREE.DoubleSide, transparent: true, opacity: 0.3
-            });
-            tunnel = new THREE.Mesh(tunnelGeom, tunnelMat);
-            tunnel.rotation.x = Math.PI / 2;
-            scene.add(tunnel);
-
-            const pGeom = new THREE.BufferGeometry();
-            const pCount = 15000;
-            const pPos = new Float32Array(pCount * 3);
-            for(let i=0; i<pCount*3; i++) { pPos[i] = (Math.random() - 0.5) * 400; }
-            pGeom.setAttribute('position', new THREE.BufferAttribute(pPos, 3));
-            const pMat = new THREE.PointsMaterial({ size: 0.2, color: 0x00ffff, transparent: true });
-            particles = new THREE.Points(pGeom, pMat);
-            scene.add(particles);
-
-            animate();
-        }
-
-        async function setupAudioLink() {
-            statusEl.innerText = "Mac送信機(my-vr-audio-sender)を呼び出し中...";
+            // 2. AudioContextに接続
+            const source = audioCtx.createMediaStreamSource(remoteStream);
+            analyzer = audioCtx.createAnalyser();
+            analyzer.fftSize = 512;
+            source.connect(analyzer);
             
-            // Mac側のID 'my-vr-audio-sender' に接続
-            // ダミーのストリームを渡して接続を開始する
-            const call = peer.call('my-vr-audio-sender', new MediaStream());
+            // Quest本体からも音を鳴らしたい場合は、mutedを解除するか、以下を有効にする
+            // source.connect(audioCtx.destination); 
+            
+            dataArray = new Uint8Array(analyzer.frequencyBinCount);
+            statusEl.innerText = "解析開始！VRボタンを押してください";
+            document.getElementById('startBtn').style.display = 'none';
+        };
+    });
 
-            call.on('stream', (remoteStream) => {
-                statusEl.innerText = "デジタル音源を受信中！ENTER VR を押してください";
-                
-                const AudioContext = window.AudioContext || window.webkitAudioContext;
-                const audioCtx = new AudioContext();
-                
-                // 受信した音を解析
-                const source = audioCtx.createMediaStreamSource(remoteStream);
-                analyzer = audioCtx.createAnalyser();
-                analyzer.fftSize = 512;
-                source.connect(analyzer);
-                
-                // Questのスピーカーからも音を出す（遅延確認用）
-                source.connect(audioCtx.destination);
-                
-                dataArray = new Uint8Array(analyzer.frequencyBinCount);
-                document.getElementById('startBtn').style.display = 'none';
-            });
-
-            peer.on('error', (err) => {
-                statusEl.innerText = "接続失敗: Macのページが開いているか確認してください";
-                console.error(err);
-            });
-        }
-
-        function animate() {
-            renderer.setAnimationLoop(() => {
-                if (analyzer) {
-                    analyzer.getByteFrequencyData(dataArray);
-                    const bass = dataArray[5] / 255;
-                    const mid = dataArray[40] / 255;
-                    
-                    tunnel.rotation.y += 0.01 + bass * 0.05;
-                    tunnel.scale.set(1 + bass * 0.3, 1, 1 + bass * 0.3);
-                    tunnel.material.color.setHSL((Date.now() * 0.0001 + mid) % 1, 1, 0.5);
-
-                    const pos = particles.geometry.attributes.position.array;
-                    for (let i = 2; i < pos.length; i += 3) {
-                        pos[i] += 0.5 + bass * 3;
-                        if (pos[i] > 200) pos[i] = -200;
-                    }
-                    particles.geometry.attributes.position.needsUpdate = true;
-                }
-                renderer.render(scene, camera);
-            });
-        }
-
-        document.getElementById('startBtn').addEventListener('click', () => {
-            setupAudioLink();
-            initScene();
-        });
-    </script>
-</body>
-</html>
+    peer.on('error', (err) => {
+        statusEl.innerText = "接続失敗: sender.htmlが開いているか確認してください";
+    });
+}
