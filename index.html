@@ -2,26 +2,23 @@
 <html lang="en">
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Psy-XR Final Link</title>
+    <title>Psy-XR Final Fix</title>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+    <script src="https://unpkg.com/peerjs@1.3.1/dist/peerjs.min.js"></script>
     <style>
-        body { margin: 0; background: #000; overflow: hidden; }
-        #arBtn { 
-            position: fixed; top: 50%; left: 50%; transform: translate(-50%, -50%);
-            padding: 60px 100px; font-size: 40px; background: #00ffff; color: #000;
-            border: 8px solid #fff; border-radius: 20px; font-weight: bold; z-index: 9999;
-            cursor: pointer;
-        }
-        #status { position: fixed; bottom: 20px; width: 100%; text-align: center; color: #0f0; font-family: monospace; z-index: 1000; font-size: 18px; text-shadow: 2px 2px #000; }
+        body { margin: 0; background: #000; overflow: hidden; font-family: monospace; }
+        #ui { position: fixed; top: 0; left: 0; width: 100%; height: 100%; display: flex; flex-direction: column; justify-content: center; align-items: center; background: #000; z-index: 1000; }
+        #arBtn { padding: 40px 80px; font-size: 30px; background: #555; color: #fff; border: none; border-radius: 15px; cursor: not-allowed; }
+        #arBtn.ready { background: #00ffff; color: #000; cursor: pointer; box-shadow: 0 0 20px #00ffff; }
+        #status { color: #0f0; margin-top: 20px; font-size: 18px; text-align: center; }
     </style>
 </head>
 <body>
-    <button id="arBtn">START AR</button>
-    <div id="status">WAITING FOR USER...</div>
+    <div id="ui">
+        <button id="arBtn" disabled>WAITING FOR MAC...</button>
+        <div id="status">INITIALIZING PEER...</div>
+    </div>
     <audio id="remoteAudio" autoplay></audio>
-
-    <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
-    <script src="https://unpkg.com/peerjs@1.3.1/dist/peerjs.min.js"></script>
 
     <script>
         const btn = document.getElementById('arBtn');
@@ -30,120 +27,83 @@
         let renderer, scene, camera, mesh, geometries = [];
         let currentIdx = 0, lastSwitch = 0, hue = 0;
 
-        // 1. START AR FIRST
+        // 1. Initialize Peer IMMEDIATELY on page load
+        const peer = new Peer('quest-receiver');
+
+        peer.on('open', (id) => {
+            status.innerText = "PEER ID: " + id + "\n1. RUN MAC SENDER NOW";
+        });
+
+        // This is the trigger: When Mac connects, we enable the AR button
+        peer.on('connection', conn => {
+            status.innerText = "MAC CONNECTED!\n2. CLICK 'START AR' BUTTON BELOW";
+            btn.disabled = false;
+            btn.classList.add('ready');
+            btn.innerText = "START AR";
+            
+            conn.on('data', data => { 
+                macData = data; 
+            });
+        });
+
+        peer.on('call', call => {
+            call.answer(new MediaStream());
+            call.on('stream', stream => {
+                document.getElementById('remoteAudio').srcObject = stream;
+            });
+        });
+
+        // 2. AR Setup (only after Mac is connected)
         btn.onclick = () => {
-            if (!navigator.xr) {
-                status.innerText = "WEBXR NOT SUPPORTED";
-                return;
-            }
             navigator.xr.requestSession('immersive-ar', {
                 requiredFeatures: ['local-floor', 'hand-tracking']
-            }).then(setupXR).catch(err => {
-                status.innerText = "XR ERROR: " + err.message;
-            });
+            }).then(setupXR);
         };
 
         function setupXR(session) {
-            btn.style.display = 'none';
+            document.getElementById('ui').style.display = 'none';
             
-            renderer = new THREE.WebGLRenderer({ antialias: false, alpha: true, powerPreference: "high-performance" });
+            renderer = new THREE.WebGLRenderer({ antialias: false, alpha: true });
             renderer.xr.enabled = true;
-            renderer.setPixelRatio(1);
             renderer.setSize(window.innerWidth, window.innerHeight);
             renderer.xr.setSession(session);
 
             scene = new THREE.Scene();
             camera = new THREE.PerspectiveCamera(70, window.innerWidth/window.innerHeight, 0.1, 100);
 
-            createGeos();
-            const mat = new THREE.MeshBasicMaterial({ wireframe: true, transparent: true, opacity: 0.8 });
-            mesh = new THREE.Mesh(geometries[0], mat);
+            // Generate Geometries
+            for(let i=0; i<12; i++) {
+                geometries.push(new THREE.TorusKnotGeometry(1, 0.3, 100, 16, i+1, i+2));
+            }
+            mesh = new THREE.Mesh(geometries[0], new THREE.MeshBasicMaterial({wireframe: true, transparent: true}));
             scene.add(mesh);
 
-            initPeer(); // Start communication after AR is active
             renderer.setAnimationLoop(render);
-        }
-
-        function createGeos() {
-            geometries = [
-                new THREE.TorusKnotGeometry(1, 0.4, 128, 16),
-                new THREE.IcosahedronGeometry(1.5, 1),
-                new THREE.TorusGeometry(2, 0.05, 16, 100),
-                new THREE.OctahedronGeometry(1.5, 0),
-                new THREE.TorusKnotGeometry(1.5, 0.1, 200, 3, 3, 5),
-                new THREE.BoxGeometry(2, 2, 2, 4, 4, 4),
-                new THREE.DodecahedronGeometry(1.5, 0),
-                new THREE.TorusGeometry(1.5, 0.8, 12, 6),
-                new THREE.SphereGeometry(1.5, 32, 32),
-                new THREE.ConeGeometry(1.5, 3, 32, 1, true),
-                new THREE.TorusKnotGeometry(1.2, 0.6, 64, 4),
-                new THREE.CapsuleGeometry(1, 2, 4, 16)
-            ];
-        }
-
-        // THE UPDATED PEER FUNCTION
-        function initPeer() {
-            const peer = new Peer('quest-receiver'); 
-
-            peer.on('open', (id) => {
-                status.innerText = "READY. ID: " + id + ". RUN MAC SENDER NOW.";
-            });
-
-            peer.on('connection', conn => {
-                status.innerText = "DATA LINK ESTABLISHED";
-                conn.on('data', data => { 
-                    macData = data; 
-                });
-            });
-
-            peer.on('call', call => {
-                call.answer(new MediaStream());
-                call.on('stream', stream => {
-                    document.getElementById('remoteAudio').srcObject = stream;
-                    status.innerText = "AUDIO/DATA FULL LINK";
-                });
-            });
-
-            peer.on('error', err => {
-                status.innerText = "PEER ERROR: " + err.type;
-                console.error(err);
-            });
         }
 
         function render(time, frame) {
             hue += 0.005;
-
-            // Mode switching via Mac trigger
             if (macData.trigger && Date.now() - lastSwitch > 600) {
-                currentIdx = Math.floor(Math.random() * 12);
+                currentIdx = (currentIdx + 1) % 12;
                 mesh.geometry = geometries[currentIdx];
                 lastSwitch = Date.now();
             }
 
-            // Hand Tracking follow
             if (frame) {
-                const sources = frame.session.inputSources;
-                for (const input of sources) {
+                const inputSources = frame.session.inputSources;
+                for (const input of inputSources) {
                     if (input.hand) {
                         const tip = frame.getJointPose(input.hand.get('index-finger-tip'), renderer.xr.getReferenceSpace());
-                        const wrist = frame.getJointPose(input.hand.get('wrist'), renderer.xr.getReferenceSpace());
-                        if (tip && wrist) {
-                            const tPos = tip.transform.position;
-                            const wPos = wrist.transform.position;
-                            mesh.position.lerp(new THREE.Vector3(tPos.x, tPos.y, tPos.z), 0.2);
-                            const dist = Math.hypot(tPos.x - wPos.x, tPos.y - wPos.y, tPos.z - wPos.z);
-                            mesh.scale.setScalar(0.5 + (dist * 6) + (macData.low * 2.5));
+                        if (tip) {
+                            mesh.position.lerp(new THREE.Vector3().copy(tip.transform.position), 0.2);
                         }
                     }
                 }
             }
 
-            // Rotation and Color via Audio
-            mesh.rotation.x += 0.01 + macData.mid * 0.1;
-            mesh.rotation.y += 0.02 + macData.high * 0.2;
-            mesh.material.color.setHSL((hue + macData.mid) % 1, 0.8, 0.5 + macData.low * 0.2);
-            mesh.material.opacity = 0.4 + macData.low * 0.6;
-
+            mesh.rotation.y += 0.02 + macData.high * 0.1;
+            mesh.scale.setScalar(0.5 + macData.low * 3);
+            mesh.material.color.setHSL((hue + macData.mid) % 1, 0.8, 0.5);
             renderer.render(scene, camera);
         }
     </script>
