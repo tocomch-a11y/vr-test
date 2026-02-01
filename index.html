@@ -2,34 +2,31 @@
 <html lang="ja">
 <head>
     <meta charset="UTF-8">
-    <title>Quest VR - Final Audio Fix</title>
+    <title>Psychedelic VR Tunnel v2</title>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
     <script src="https://unpkg.com/peerjs@1.3.1/dist/peerjs.min.js"></script>
     <style>
         body { margin: 0; background: #000; overflow: hidden; font-family: sans-serif; }
         #overlay { position: absolute; top: 0; left: 0; width: 100%; height: 100%; display: flex; flex-direction: column; justify-content: center; align-items: center; color: white; background: #000; z-index: 100; text-align: center; }
         .id-label { font-size: 24px; color: #00ffff; margin: 10px; padding: 10px; border: 2px solid #00ffff; border-radius: 10px; }
-        button { padding: 25px 50px; font-size: 22px; background: #ff00ff; color: white; border: none; border-radius: 50px; cursor: pointer; font-weight: bold; box-shadow: 0 0 20px #ff00ff; }
+        button { padding: 25px 50px; font-size: 22px; background: linear-gradient(45deg, #ff00ff, #00ffff); color: white; border: none; border-radius: 50px; cursor: pointer; font-weight: bold; box-shadow: 0 0 30px rgba(255,0,255,0.5); }
         #status { color: #00ff88; margin-bottom: 20px; font-size: 1.2em; }
     </style>
 </head>
 <body>
     <div id="overlay">
-        <h1>VR Audio Visualizer</h1>
+        <h1>Advanced VR Visualizer</h1>
         <div id="status">Peer初期化中...</div>
         <div id="idLabel" class="id-label">----</div>
-        <div id="actionArea">
-            <p>1. このIDをMacに入力してください</p>
-        </div>
+        <div id="actionArea"><p>Macから送信してください</p></div>
     </div>
-
     <audio id="remoteAudio" autoplay></audio>
 
     <script type="module">
         import { VRButton } from 'https://unpkg.com/three@0.128.0/examples/jsm/webxr/VRButton.js';
 
-        let scene, camera, renderer, analyzer, dataArray, audioCtx, tunnel;
-        let streamReceived = null;
+        let scene, camera, renderer, analyzer, dataArray, audioCtx, tunnel, particles;
+        let hue = 0;
         
         const questId = 'vr-target-' + Math.floor(Math.random() * 999);
         const peer = new Peer(questId);
@@ -39,8 +36,10 @@
             document.getElementById('status').innerText = "接続待機中...";
         });
 
-        // 3Dシーン構築 (変更なし)
+        // --- 3D空間の構築 ---
         scene = new THREE.Scene();
+        scene.fog = new THREE.FogExp2(0x000000, 0.005);
+        
         camera = new THREE.PerspectiveCamera(90, window.innerWidth/window.innerHeight, 0.1, 1000);
         renderer = new THREE.WebGLRenderer({ antialias: true });
         renderer.setSize(window.innerWidth, window.innerHeight);
@@ -48,25 +47,38 @@
         document.body.appendChild(renderer.domElement);
         document.body.appendChild(VRButton.createButton(renderer));
 
-        const tunnelGeom = new THREE.CylinderGeometry(30, 30, 500, 32, 1, true);
-        tunnel = new THREE.Mesh(tunnelGeom, new THREE.MeshBasicMaterial({ color: 0x00ffff, wireframe: true }));
+        // トンネルの作成 (セグメントを増やして滑らかに)
+        const tunnelGeom = new THREE.CylinderGeometry(20, 20, 600, 64, 100, true);
+        const tunnelMat = new THREE.MeshBasicMaterial({ 
+            color: 0xff00ff, 
+            wireframe: true, 
+            side: THREE.DoubleSide,
+            transparent: true,
+            opacity: 0.6
+        });
+        tunnel = new THREE.Mesh(tunnelGeom, tunnelMat);
         tunnel.rotation.x = Math.PI / 2;
         scene.add(tunnel);
 
-        // Macからの着信処理
-        peer.on('call', (call) => {
-            call.answer(new MediaStream()); // 自分のマイクは空で返す
-            call.on('stream', (stream) => {
-                streamReceived = stream;
-                document.getElementById('status').innerText = "通信成功！";
-                
-                // 隠しオーディオ要素にストリームをセット
-                const audioEl = document.getElementById('remoteAudio');
-                audioEl.srcObject = stream;
+        // パーティクル星空
+        const pCount = 5000;
+        const pGeom = new THREE.BufferGeometry();
+        const pPos = new Float32Array(pCount * 3);
+        const pVelo = new Float32Array(pCount);
+        for(let i=0; i<pCount*3; i++) pPos[i] = (Math.random() - 0.5) * 600;
+        for(let i=0; i<pCount; i++) pVelo[i] = Math.random() * 2;
+        pGeom.setAttribute('position', new THREE.BufferAttribute(pPos, 3));
+        particles = new THREE.Points(pGeom, new THREE.PointsMaterial({ size: 0.5, color: 0xffffff }));
+        scene.add(particles);
 
-                // ボタンを表示
+        // --- 音声接続処理 ---
+        peer.on('call', (call) => {
+            call.answer(new MediaStream());
+            call.on('stream', (stream) => {
+                document.getElementById('remoteAudio').srcObject = stream;
+                document.getElementById('status').innerText = "通信成功！";
                 const btn = document.createElement('button');
-                btn.innerText = "2. 連動を開始する";
+                btn.innerText = "サイケデリック・スタート";
                 btn.onclick = () => startAudioEngine(stream);
                 document.getElementById('actionArea').innerHTML = "";
                 document.getElementById('actionArea').appendChild(btn);
@@ -74,42 +86,55 @@
         });
 
         async function startAudioEngine(stream) {
-            // AudioContextの生成と再開
-            if (!audioCtx) {
-                audioCtx = new (window.AudioContext || window.webkitAudioContext)();
-            }
+            audioCtx = new (window.AudioContext || window.webkitAudioContext)();
             await audioCtx.resume();
-
-            // 解析器の設定
             const source = audioCtx.createMediaStreamSource(stream);
             analyzer = audioCtx.createAnalyser();
-            analyzer.fftSize = 128; // 解析を軽く、反応を速く
+            analyzer.fftSize = 512;
             source.connect(analyzer);
-            
-            // スピーカーに出力 (Questの音を出す)
-            analyzer.connect(audioCtx.destination);
-            
+            source.connect(audioCtx.destination);
             dataArray = new Uint8Array(analyzer.frequencyBinCount);
-            
-            // UIを消してVRへ
             document.getElementById('overlay').style.display = 'none';
         }
 
+        // --- メインループ (音に合わせてビジュアル変化) ---
         renderer.setAnimationLoop(() => {
             if (analyzer) {
                 analyzer.getByteFrequencyData(dataArray);
-                
-                // 音の強さを計算 (平均値を取得)
-                let sum = 0;
-                for(let i = 0; i < dataArray.length; i++) {
-                    sum += dataArray[i];
-                }
-                const average = sum / dataArray.length;
-                const volume = (average / 255) * 12; // 感度を大幅アップ
 
-                // トンネルの動きに反映
-                tunnel.scale.set(1 + volume, 1, 1 + volume);
-                tunnel.rotation.y += 0.01 + (volume * 0.1);
+                // 各音域の抽出
+                const low = dataArray[5] / 255;    // 低音 (50-100Hz)
+                const mid = dataArray[20] / 255;   // 中音 (200-500Hz)
+                const high = dataArray[60] / 255;  // 高音 (1kHz+)
+                const all = (low + mid + high) / 3; // 全体平均
+
+                // 1. 形の変化: 低音に合わせて太さが変わる
+                tunnel.scale.set(1 + low * 1.5, 1, 1 + low * 1.5);
+                
+                // 2. 色の変化: 徐々に変化し、高音でさらにフラッシュ
+                hue += 0.002 + (mid * 0.01); 
+                tunnel.material.color.setHSL(hue % 1, 0.8, 0.4 + high * 0.4);
+
+                // 3. 回転の変化: 中音に合わせて回転速度が変わる
+                tunnel.rotation.y += 0.005 + mid * 0.1;
+                tunnel.rotation.z += high * 0.05;
+
+                // 4. パーティクルの動き: 音圧(all)に合わせて加速
+                const positions = particles.geometry.attributes.position.array;
+                for (let i = 2; i < positions.length; i += 3) {
+                    positions[i] += 1.0 + all * 20; // 前方へ進む
+                    if (positions[i] > 300) {
+                        positions[i] = -300; // 奥に戻る
+                        positions[i-1] = (Math.random() - 0.5) * 400; // XYをランダムに再配置
+                        positions[i-2] = (Math.random() - 0.5) * 400;
+                    }
+                }
+                particles.geometry.attributes.position.needsUpdate = true;
+                particles.material.color.setHSL((hue + 0.5) % 1, 1, 0.8);
+
+                // 5. カメラを少し揺らす
+                camera.position.z = Math.sin(Date.now() * 0.001) * 2;
+                camera.rotation.z = Math.sin(Date.now() * 0.0005) * 0.1;
             }
             renderer.render(scene, camera);
         });
