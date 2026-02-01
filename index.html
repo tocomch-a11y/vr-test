@@ -16,15 +16,13 @@
     <script>
         let scene, camera, renderer, mesh, xrRefSpace;
         let geometries = [];
-        // グローバル変数を確実に更新可能にする
-        window.macData = { low: 0, mid: 0, high: 0, trigger: false };
+        let macData = { low: 0, mid: 0, high: 0, trigger: false }; 
         let lastSwitch = 0, hue = 0;
         const audio = document.getElementById('audio');
 
         function initGeos() {
             geometries = [];
             for(let i=0; i<12; i++) {
-                // 複雑な形状を生成
                 geometries.push(new THREE.TorusKnotGeometry(0.3, 0.08, 128, 16, i+1, i+4));
             }
         }
@@ -32,6 +30,7 @@
         const btn = document.getElementById('arBtn');
         btn.onclick = async () => {
             if (navigator.xr) {
+                // hand-tracking を確実に要求
                 const session = await navigator.xr.requestSession('immersive-ar', {
                     requiredFeatures: ['local-floor', 'hand-tracking']
                 });
@@ -60,16 +59,14 @@
         }
 
         function initPeer() {
-            // IDを固定してMacから確実に接続
             const peer = new Peer('quest-receiver'); 
             peer.on('connection', conn => {
-                console.log("Connected to Mac!");
                 conn.on('data', d => {
-                    // 受信データをグローバルに即時反映
-                    window.macData.low = d.low || 0;
-                    window.macData.mid = d.mid || 0;
-                    window.macData.high = d.high || 0;
-                    window.macData.trigger = !!d.trigger;
+                    // macData オブジェクトを直接更新
+                    macData.low = d.low || 0;
+                    macData.mid = d.mid || 0;
+                    macData.high = d.high || 0;
+                    macData.trigger = !!d.trigger;
                 });
             });
             peer.on('call', call => {
@@ -81,61 +78,54 @@
         function render(time, frame) {
             if (!frame || !xrRefSpace) return;
             hue += 0.005;
-            const data = window.macData; // 常に最新の受信データを使用
 
-            // 1. 音に合わせた形状ランダム変化
-            if (data.trigger && (Date.now() - lastSwitch > 300)) {
+            // 1. 低音トリガーによる形状ランダム切り替え
+            if (macData.trigger && (Date.now() - lastSwitch > 300)) {
                 mesh.geometry = geometries[Math.floor(Math.random() * geometries.length)];
                 lastSwitch = Date.now();
             }
 
-            // 2. 指10本の完全トラッキング
+            // 2. 指10本のトラッキング
             let totalPos = new THREE.Vector3(), count = 0;
-            const inputSources = frame.session.inputSources;
-
-            for (const input of inputSources) {
+            for (const input of frame.session.inputSources) {
                 if (input.hand) {
-                    // 全ての関節ポイントを取得対象にする
                     const joints = ['thumb-tip', 'index-finger-tip', 'middle-finger-tip', 'ring-finger-tip', 'pinky-tip'];
                     joints.forEach(j => {
                         const joint = input.hand.get(j);
-                        if (joint) {
-                            const pose = frame.getJointPose(joint, xrRefSpace);
-                            if (pose) {
-                                totalPos.add(new THREE.Vector3().set(
-                                    pose.transform.position.x,
-                                    pose.transform.position.y,
-                                    pose.transform.position.z
-                                ));
-                                count++;
-                            }
+                        const pose = joint ? frame.getJointPose(joint, xrRefSpace) : null;
+                        if (pose) {
+                            // 座標を再構築して計算
+                            totalPos.add(new THREE.Vector3(
+                                pose.transform.position.x,
+                                pose.transform.position.y,
+                                pose.transform.position.z
+                            ));
+                            count++;
                         }
                     });
                 }
             }
 
-            // 3. 視線ターゲットの計算
             const gazeDir = new THREE.Vector3(0, 0, -0.6).applyQuaternion(camera.quaternion).add(camera.position);
 
-            // 4. トラッキング情報の反映
             if (count > 0) {
                 const avgPos = totalPos.divideScalar(count);
-                // 手の位置を優先しつつ視線方向を少しブレンド
-                mesh.position.lerp(avgPos, 0.15);
-                mesh.rotation.y += 0.05 + (data.high * 0.8); // 高音で高速回転
+                // 手の位置へ高速追従
+                mesh.position.lerp(avgPos, 0.2);
+                // 指の数と高音域で回転を加速
+                mesh.rotation.y += 0.05 + (macData.high * 1.0);
             } else {
-                // 手がない時は視線の正面へ
                 mesh.position.lerp(gazeDir, 0.05);
                 mesh.rotation.y += 0.02;
             }
 
-            // 5. 音に合わせたスケールと色の変化
-            // low（低音）で巨大化、mid（中音）で色相変化、high（高音）で輝度変化
-            const s = 0.5 + (data.low * 3.5);
+            // 3. 音データの反映（低音で巨大化、中音で色変化）
+            const s = 0.5 + (macData.low * 3.5);
             mesh.scale.setScalar(s);
             
-            const colorHue = (hue + (data.mid * 0.5)) % 1;
-            mesh.material.color.setHSL(colorHue, 1, 0.4 + (data.high * 0.4));
+            // 色の変化をより劇的に
+            const colorHue = (hue + (macData.mid * 0.7)) % 1;
+            mesh.material.color.setHSL(colorHue, 1, 0.5);
             
             renderer.render(scene, camera);
         }
