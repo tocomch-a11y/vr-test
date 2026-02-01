@@ -2,19 +2,19 @@
 <html lang="ja">
 <head>
     <meta charset="UTF-8">
-    <title>Psychedelic XR - LSD Trip Edition</title>
+    <title>Psychedelic XR - Space Flow</title>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
     <script src="https://unpkg.com/peerjs@1.3.1/dist/peerjs.min.js"></script>
     <style>
-        body { margin: 0; background: #000; overflow: hidden; font-family: sans-serif; }
-        #overlay { position: absolute; width: 100%; height: 100%; display: flex; flex-direction: column; justify-content: center; align-items: center; color: white; background: rgba(0,0,0,0.9); z-index: 100; }
-        button { padding: 30px 60px; font-size: 24px; background: #ff00ff; color: white; border: none; border-radius: 50px; cursor: pointer; font-weight: bold; }
+        body { margin: 0; background: #000; overflow: hidden; }
+        #overlay { position: absolute; width: 100%; height: 100%; display: flex; flex-direction: column; justify-content: center; align-items: center; color: white; background: rgba(0,0,0,0.9); z-index: 100; font-family: sans-serif; }
+        button { padding: 30px 60px; font-size: 24px; background: #00ffff; border: none; border-radius: 50px; cursor: pointer; font-weight: bold; }
     </style>
 </head>
 <body>
     <div id="overlay">
-        <div id="status">信号待機中...</div>
-        <button id="startBtn" style="display:none;">TRIP START (AR)</button>
+        <div id="status">Wait for Mac Signal...</div>
+        <button id="startBtn" style="display:none;">START LSD-AR</button>
     </div>
     <audio id="remoteAudio" autoplay></audio>
 
@@ -23,16 +23,16 @@
 
         let scene, camera, renderer, analyzer, dataL, audioCtx;
         let currentMode = 'Y', autoMode = false, lsdMode = false;
-        let lastAutoSwitch = 0, hueBase = 0;
+        let lastAutoSwitch = 0, hueBase = 0, frameCount = 0;
         const groups = { A: new THREE.Group(), B: new THREE.Group(), X: new THREE.Group(), Y: new THREE.Group() };
-        let lsdOverlay;
 
+        // PeerJS Setup
         const peer = new Peer('psy-link-stable-quest');
         peer.on('call', call => {
             call.answer(new MediaStream());
             call.on('stream', stream => {
                 document.getElementById('remoteAudio').srcObject = stream;
-                document.getElementById('status').innerText = "Link Established";
+                document.getElementById('status').innerText = "Connected";
                 document.getElementById('startBtn').style.display = "block";
                 window.remoteStream = stream;
             });
@@ -44,7 +44,7 @@
             audioCtx = new (window.AudioContext || window.webkitAudioContext)();
             const source = audioCtx.createMediaStreamSource(window.remoteStream);
             analyzer = audioCtx.createAnalyser();
-            analyzer.fftSize = 256; // 負荷軽減のため小さく設定
+            analyzer.fftSize = 128; // 極限まで下げる
             source.connect(analyzer);
             dataL = new Uint8Array(analyzer.frequencyBinCount);
             source.connect(audioCtx.destination);
@@ -52,72 +52,60 @@
             document.getElementById('overlay').style.display = 'none';
 
             scene = new THREE.Scene();
-            camera = new THREE.PerspectiveCamera(75, window.innerWidth/window.innerHeight, 0.1, 1000);
+            camera = new THREE.PerspectiveCamera(70, window.innerWidth/window.innerHeight, 0.1, 1000);
             renderer = new THREE.WebGLRenderer({ antialias: false, alpha: true });
+            renderer.setPixelRatio(1); // 解像度を固定して負荷軽減
             renderer.setSize(window.innerWidth, window.innerHeight);
             renderer.xr.enabled = true;
             document.body.appendChild(renderer.domElement);
 
-            setupModes();
-            setupLSDOverlay();
-            
-            Object.values(groups).forEach(g => scene.add(g));
-            switchM('Y');
+            setupAll();
+            navigator.xr.requestSession('immersive-ar', { 
+                requiredFeatures: ['local-floor'],
+                optionalFeatures: ['mesh-detection', 'plane-detection'] // 空間キャプチャ機能の呼び出し
+            }).then(s => renderer.xr.setSession(s));
 
-            navigator.xr.requestSession('immersive-ar', { optionalFeatures: ['local-floor'] }).then(s => renderer.xr.setSession(s));
             renderer.setAnimationLoop(render);
         }
 
-        function setupLSDOverlay() {
-            // 視界全体を覆う歪みエフェクト用の平面
-            const geo = new THREE.SphereGeometry(0.5, 32, 32);
-            const mat = new THREE.MeshBasicMaterial({
-                color: 0xffffff,
-                wireframe: true,
-                transparent: true,
-                opacity: 0,
-                side: THREE.BackSide
-            });
-            lsdOverlay = new THREE.Mesh(geo, mat);
-            // カメラに追従させるためシーンに追加（カメラの子にはしない）
-            scene.add(lsdOverlay);
-        }
-
-        function setupModes() {
-            // Y: 高密度スペクトラム
-            for(let j=0; j<30; j++) {
+        function setupAll() {
+            // Y: 中心から放射するスペクトラム
+            for(let j=0; j<25; j++) {
                 const geo = new THREE.BufferGeometry().setAttribute('position', new THREE.BufferAttribute(new Float32Array(64*3), 3));
                 groups.Y.add(new THREE.LineLoop(geo, new THREE.LineBasicMaterial({transparent: true})));
             }
-            // B: 前回の良かったB（復刻）
+            // B: 復活のレインボー・トンネル
             for(let i=0; i<15; i++) {
-                groups.B.add(new THREE.Mesh(new THREE.TorusGeometry(5+i, 0.05, 8, 40), new THREE.MeshBasicMaterial({wireframe: true})));
+                const ring = new THREE.Mesh(new THREE.TorusGeometry(3+i, 0.05, 8, 32), new THREE.MeshBasicMaterial({wireframe: true}));
+                ring.position.z = -i * 3;
+                groups.B.add(ring);
             }
-            // X: 復刻カスキューブ
-            for(let i=0; i<50; i++) {
-                const c = new THREE.Mesh(new THREE.BoxGeometry(2,2,2), new THREE.MeshBasicMaterial({wireframe: true}));
-                c.position.set((Math.random()-0.5)*60, (Math.random()-0.5)*60, -Math.random()*60);
+            // X: 空間浮遊キューブ
+            for(let i=0; i<40; i++) {
+                const c = new THREE.Mesh(new THREE.BoxGeometry(1.5,1.5,1.5), new THREE.MeshBasicMaterial({wireframe: true}));
+                c.position.set((Math.random()-0.5)*40, (Math.random()-0.5)*40, (Math.random()-0.5)*40);
                 groups.X.add(c);
             }
-            // A: LSD幾何学（全く別物）
-            for(let i=0; i<20; i++) {
-                const g = new THREE.Mesh(new THREE.IcosahedronGeometry(i*2, 1), new THREE.MeshBasicMaterial({wireframe: true}));
-                groups.A.add(g);
-            }
+            // A: LSD-SpiderWeb (空間を覆うクモの巣)
+            const webGeo = new THREE.IcosahedronGeometry(20, 2);
+            groups.A.add(new THREE.Mesh(webGeo, new THREE.MeshBasicMaterial({wireframe: true, transparent: true, opacity: 0.5})));
+
+            Object.values(groups).forEach(g => { g.visible = false; scene.add(g); });
+            groups.Y.visible = true;
         }
 
         function render() {
+            frameCount++;
             const session = renderer.xr.getSession();
             if (session) {
                 for (const source of session.inputSources) {
                     const b = source.gamepad.buttons;
-                    // 右トリガー：オート切替トグル
+                    // 右トリガー：オート切替
                     if (source.handedness === 'right' && b[0]?.pressed && Date.now() - lastAutoSwitch > 500) {
                         autoMode = !autoMode; lastAutoSwitch = Date.now();
                     }
-                    // 左トリガー：LSDモードON/OFF
-                    if (source.handedness === 'left' && b[0]?.pressed) lsdMode = true;
-                    else if (source.handedness === 'left') lsdMode = false;
+                    // 左トリガー：LSD空間歪み（AR情報のサイケ化）
+                    lsdMode = (source.handedness === 'left' && b[0]?.pressed);
 
                     if (source.handedness === 'right') {
                         if (b[4]?.pressed) switchM('A'); if (b[5]?.pressed) switchM('B');
@@ -127,28 +115,27 @@
                 }
             }
 
-            if (analyzer) {
+            // 負荷対策：2フレームに1回だけ計算
+            if (analyzer && frameCount % 2 === 0) {
                 analyzer.getByteFrequencyData(dataL);
-                const low = dataL[5]/255, mid = dataL[20]/255, high = dataL[60]/255;
-                hueBase += 0.003;
+                const low = dataL[2]/255, mid = dataL[10]/255;
+                hueBase += 0.005;
 
-                // 頭の向き（Rotation）を取得してビジュアルに反映
-                const headDir = new THREE.Vector3();
-                camera.getWorldDirection(headDir);
+                // 視線方向の取得
+                const lookVec = new THREE.Vector3(0,0,-1).applyQuaternion(camera.quaternion);
 
-                if (autoMode && low > 0.8 && Date.now() - lastAutoSwitch > 400) {
+                if (autoMode && low > 0.8 && Date.now() - lastAutoSwitch > 1000) {
                     switchM(['A','B','X','Y'][Math.floor(Math.random()*4)]);
                     lastAutoSwitch = Date.now();
                 }
 
-                // LSD Overlayの制御 (現実を溶かす)
-                lsdOverlay.position.copy(camera.position);
+                // LSDモード：AR空間全体にオーラを纏わせる
                 if (lsdMode) {
-                    lsdOverlay.material.opacity = 0.1 + low * 0.4;
-                    lsdOverlay.scale.setScalar(1 + Math.sin(Date.now()*0.005) * high);
-                    lsdOverlay.material.color.setHSL(hueBase % 1, 1, 0.5);
+                    scene.rotation.y += 0.05;
+                    scene.scale.setScalar(1 + Math.sin(Date.now()*0.01)*0.1);
                 } else {
-                    lsdOverlay.material.opacity = 0;
+                    scene.rotation.y *= 0.9;
+                    scene.scale.setScalar(1);
                 }
 
                 if (currentMode === 'Y') {
@@ -156,31 +143,30 @@
                         const pos = l.geometry.attributes.position.array;
                         for(let i=0; i<64; i++) {
                             const a = (i/64)*Math.PI*2;
-                            // ヘッドセットの向き(headDir)に応じて波形が歪む
-                            const r = (j*0.5) + (dataL[i%32]/255) * (5 + headDir.x * 10);
-                            pos[i*3] = Math.cos(a)*r; pos[i*3+1] = Math.sin(a)*r; pos[i*3+2] = -j*3;
+                            // 見ている方向に波形が吸い込まれるような演出
+                            const r = (j*0.4) + (dataL[i%32]/255)*(5 + lookVec.x * 10);
+                            pos[i*3] = Math.cos(a)*r; pos[i*3+1] = Math.sin(a)*r; pos[i*3+2] = -j*2 + lookVec.z*5;
                         }
                         l.geometry.attributes.position.needsUpdate = true;
-                        l.material.color.setHSL((hueBase + j*0.02)%1, 1, 0.5);
-                    });
-                } else if (currentMode === 'A') {
-                    groups.A.children.forEach((m, i) => {
-                        m.rotation.y += 0.01 + headDir.y * 0.1;
-                        m.scale.setScalar(1 + low * 2);
-                        m.material.color.setHSL((hueBase + i*0.05)%1, 1, 0.5);
+                        l.material.color.setHSL((hueBase + j*0.03)%1, 1, 0.5);
                     });
                 } else if (currentMode === 'B') {
                     groups.B.children.forEach((m, i) => {
-                        m.rotation.z += 0.01;
-                        m.scale.set(1+mid*3, 1+mid*3, 1);
+                        const s = 1 + low*2;
+                        m.scale.set(s, s, 1);
+                        m.rotation.z += 0.02 + lookVec.y*0.1; // 向いている方向に回転が加速
                         m.material.color.setHSL((hueBase + i*0.05)%1, 1, 0.5);
                     });
                 } else if (currentMode === 'X') {
                     groups.X.children.forEach((m, i) => {
-                        m.position.z += 0.5 + headDir.z * 2;
-                        if(m.position.z > 5) m.position.z = -60;
-                        m.material.color.setHSL((hueBase + i*0.02)%1, 1, 0.5);
+                        m.position.add(lookVec.clone().multiplyScalar(low*0.5)); // キックに合わせて視線の先へ飛ぶ
+                        if(m.position.length() > 50) m.position.set(Math.random()-0.5, Math.random()-0.5, Math.random()-0.5).multiplyScalar(30);
+                        m.material.color.setHSL((hueBase + i*0.1)%1, 1, 0.5);
                     });
+                } else if (currentMode === 'A') {
+                    groups.A.children[0].rotation.y += 0.01;
+                    groups.A.children[0].scale.setScalar(1 + low*5);
+                    groups.A.children[0].material.color.setHSL(hueBase%1, 1, 0.5);
                 }
             }
             renderer.render(scene, camera);
