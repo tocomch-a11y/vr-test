@@ -15,8 +15,6 @@
     <input type="text" id="targetId" placeholder="QuestのIDを入力">
     <br>
     <button id="sendBtn">配信開始 (VB-CABLEを選択)</button>
-    <p id="status">Questの画面に表示されたIDを入力して下さい</p>
-
     <script>
         const peer = new Peer();
         document.getElementById('sendBtn').onclick = async () => {
@@ -27,8 +25,7 @@
                     audio: { echoCancellation: false, noiseSuppression: false, autoGainControl: false } 
                 });
                 peer.call(id, stream);
-                document.getElementById('status').innerText = "送信中... Quest側で「2. 連動を開始」を押してください";
-            } catch (err) { alert("マイク許可でVB-CABLEを選んでください"); }
+            } catch (err) { alert("VB-CABLEを選んでください"); }
         };
     </script>
 </body>
