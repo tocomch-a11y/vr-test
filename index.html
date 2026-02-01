@@ -2,68 +2,71 @@
 <html>
 <head>
     <meta charset="UTF-8">
-    <title>PSY-AR HARD-START</title>
+    <title>PSY-AR STABLE START</title>
     <style>
-        body { margin: 0; background: #000; overflow: hidden; }
+        body { margin: 0; background: #000; overflow: hidden; font-family: sans-serif; }
         #arBtn { 
             position: fixed; top: 50%; left: 50%; transform: translate(-50%,-50%); 
-            padding: 80px; font-size: 40px; background: #00ff00; color: #000; 
-            border: 10px solid #fff; border-radius: 40px; z-index: 99999; 
-            font-weight: bold; cursor: pointer; box-shadow: 0 0 50px #0f0;
+            padding: 40px 60px; font-size: 24px; background: #00ff00; color: #000; 
+            border: none; border-radius: 50px; z-index: 99999; 
+            font-weight: bold; cursor: pointer; display: none; /* 最初は隠す */
         }
+        #msg { position: fixed; top: 40%; width: 100%; text-align: center; color: #fff; z-index: 99998; }
     </style>
 </head>
 <body>
-    <button id="arBtn">START AR</button>
+    <div id="msg">BROWSER INITIALIZING...</div>
+    <button id="arBtn">ENTER AR EXPERIENCE</button>
     <audio id="audio" autoplay playsinline></audio>
+
     <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
     <script src="https://unpkg.com/peerjs@1.3.1/dist/peerjs.min.js"></script>
+
     <script>
         let scene, camera, renderer, mesh, xrRefSpace;
         let geometries = [];
         window.mD = { low: 0, mid: 0, high: 0, trigger: false };
         let lastSwitch = 0, hue = 0;
 
-        // 12パターンの高精細幾何学
-        function initGeos() {
-            geometries = [
-                new THREE.TorusKnotGeometry(0.3, 0.1, 150, 20, 2, 3),
-                new THREE.IcosahedronGeometry(0.5, 2),
-                new THREE.TorusGeometry(0.5, 0.2, 32, 100),
-                new THREE.OctahedronGeometry(0.6, 0),
-                new THREE.TorusKnotGeometry(0.4, 0.05, 200, 32, 7, 11),
-                new THREE.DodecahedronGeometry(0.5, 1),
-                new THREE.BoxGeometry(0.5, 0.5, 0.5, 8, 8, 8),
-                new THREE.SphereGeometry(0.5, 12, 12),
-                new THREE.TorusKnotGeometry(0.3, 0.15, 128, 32, 3, 4),
-                new THREE.CylinderGeometry(0.4, 0.4, 1, 32, 1, true),
-                new THREE.TorusGeometry(0.4, 0.3, 10, 8),
-                new THREE.CapsuleGeometry(0.3, 0.4, 8, 16)
-            ];
+        const btn = document.getElementById('arBtn');
+        const msg = document.getElementById('msg');
+
+        // 1. WebXRが利用可能かチェックしてからボタンを表示
+        if (navigator.xr) {
+            navigator.xr.isSessionSupported('immersive-ar').then((supported) => {
+                if (supported) {
+                    btn.style.display = 'block';
+                    msg.style.display = 'none';
+                } else {
+                    msg.innerText = "AR Mode not supported on this browser.";
+                }
+            });
+        } else {
+            msg.innerText = "WebXR not found. Use HTTPS.";
         }
 
-        const btn = document.getElementById('arBtn');
-        btn.addEventListener('click', () => {
-            // WebXRセッションの開始（これより前に他処理を挟まない）
-            if (navigator.xr) {
-                navigator.xr.requestSession('immersive-ar', {
-                    requiredFeatures: ['local-floor', 'hand-tracking']
-                }).then(onSessionStarted).catch(err => {
-                    alert("AR起動エラー: " + err.message);
-                    window.location.reload(); // 失敗したら即リロード
-                });
-            } else {
-                alert("このブラウザはWebXRに対応していません。");
+        function initGeos() {
+            geometries = [];
+            for(let i=0; i<12; i++) {
+                geometries.push(new THREE.TorusKnotGeometry(0.3, 0.08, 128, 16, i+1, i+4));
             }
-        });
+        }
+
+        btn.onclick = () => {
+            // エラー回避のため features を optional に移動
+            navigator.xr.requestSession('immersive-ar', {
+                optionalFeatures: ['local-floor', 'hand-tracking']
+            }).then(onSessionStarted).catch(err => {
+                console.error(err);
+                alert("起動失敗。一度ページをリロードして、数秒待ってから押してください。\nError: " + err.message);
+            });
+        };
 
         function onSessionStarted(session) {
             btn.style.display = 'none';
-            
-            renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true, premultipliedAlpha: false });
-            renderer.setPixelRatio(window.devicePixelRatio);
-            renderer.setSize(window.innerWidth, window.innerHeight);
+            renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
             renderer.xr.enabled = true;
+            renderer.setSize(window.innerWidth, window.innerHeight);
             document.body.appendChild(renderer.domElement);
 
             scene = new THREE.Scene();
@@ -73,10 +76,12 @@
             mesh = new THREE.Mesh(geometries[0], new THREE.MeshBasicMaterial({ wireframe: true, color: 0x00ff00 }));
             scene.add(mesh);
 
-            session.requestReferenceSpace('local-floor').then(ref => {
+            // 参照空間の取得（local-floorがダメな場合はviewerを試みる）
+            const refType = session.isReferenceSpaceTypeSupported('local-floor') ? 'local-floor' : 'viewer';
+            session.requestReferenceSpace(refType).then(ref => {
                 xrRefSpace = ref;
                 renderer.xr.setSession(session);
-                initPeer(); // セッション確立後に通信開始
+                initPeer();
                 renderer.setAnimationLoop(render);
             });
 
@@ -84,8 +89,7 @@
         }
 
         function initPeer() {
-            const peer = new Peer('quest-receiver-' + Math.floor(Math.random()*1000));
-            peer.on('open', (id) => console.log("Peer ID: " + id)); // IDが変わるのでMac側で要確認
+            const peer = new Peer('quest-receiver');
             peer.on('connection', conn => {
                 conn.on('data', d => {
                     window.mD.low = d.low || 0;
@@ -98,7 +102,7 @@
                 call.answer(new MediaStream());
                 call.on('stream', s => { 
                     const aud = document.getElementById('audio');
-                    aud.srcObject = s; aud.play().catch(e => console.error(e));
+                    aud.srcObject = s; aud.play().catch(() => {});
                 });
             });
         }
@@ -108,54 +112,35 @@
             hue += 0.005;
             const d = window.mD;
 
-            // 音トリガーで形状変化
             if (d.trigger && (Date.now() - lastSwitch > 300)) {
                 mesh.geometry = geometries[Math.floor(Math.random() * geometries.length)];
                 lastSwitch = Date.now();
             }
 
-            // 視線方向の計算
             const gaze = new THREE.Vector3(0, 0, -0.6).applyQuaternion(camera.quaternion).add(camera.position);
-
-            // ハンドトラッキングの完全同期
-            let handPos = new THREE.Vector3();
-            let count = 0;
-            let pinchFactor = 0;
+            let handPos = new THREE.Vector3(), count = 0;
 
             for (const input of frame.session.inputSources) {
                 if (input.hand) {
-                    // 人差し指の指先をメインに、全指の平均を取る
-                    const joints = ['thumb-tip', 'index-finger-tip', 'middle-finger-tip', 'ring-finger-tip', 'pinky-tip'];
-                    joints.forEach(j => {
-                        const joint = input.hand.get(j);
-                        if (joint) {
-                            const pose = frame.getJointPose(joint, xrRefSpace);
-                            if (pose) {
-                                handPos.x += pose.transform.position.x;
-                                handPos.y += pose.transform.position.y;
-                                handPos.z += pose.transform.position.z;
-                                count++;
-                            }
-                        }
-                    });
+                    const joint = input.hand.get('index-finger-tip');
+                    const pose = joint ? frame.getJointPose(joint, xrRefSpace) : null;
+                    if (pose) {
+                        handPos.set(pose.transform.position.x, pose.transform.position.y, pose.transform.position.z);
+                        count++;
+                    }
                 }
             }
 
             if (count > 0) {
-                const avgPos = new THREE.Vector3(handPos.x / count, handPos.y / count, handPos.z / count);
-                // 視線と手の位置をブレンド（見ている方向の手元に吸い付く）
-                mesh.position.lerp(avgPos.lerp(gaze, 0.2), 0.2);
+                mesh.position.lerp(handPos, 0.2);
                 mesh.rotation.y += 0.05 + (d.high * 2.0);
             } else {
                 mesh.position.lerp(gaze, 0.1);
                 mesh.rotation.y += 0.02;
             }
 
-            // スケールと色
-            const s = (0.5 + (d.low * 4.0));
-            mesh.scale.setScalar(s);
+            mesh.scale.setScalar(0.5 + (d.low * 4.0));
             mesh.material.color.setHSL((hue + d.mid) % 1, 1, 0.5);
-
             renderer.render(scene, camera);
         }
     </script>
