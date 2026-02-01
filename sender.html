@@ -2,39 +2,51 @@
 <html lang="ja">
 <head>
     <meta charset="UTF-8">
-    <title>Mac Audio Sender - Stable</title>
+    <title>Mac Audio Sender</title>
     <script src="https://unpkg.com/peerjs@1.3.1/dist/peerjs.min.js"></script>
     <style>
-        body { font-family: sans-serif; background: #111; color: white; text-align: center; padding-top: 50px; }
-        button { padding: 20px; font-size: 20px; cursor: pointer; background: #00ff00; border-radius: 10px; }
-        #link { margin-top: 20px; word-break: break-all; color: #00ffff; }
+        body { font-family: sans-serif; background: #1a1a1a; color: white; display: flex; flex-direction: column; align-items: center; justify-content: center; height: 100vh; margin: 0; }
+        .box { background: #333; padding: 30px; border-radius: 20px; text-align: center; box-shadow: 0 10px 30px rgba(0,0,0,0.5); }
+        button { padding: 15px 30px; font-size: 18px; cursor: pointer; background: #00ff88; border: none; border-radius: 10px; font-weight: bold; color: #000; }
+        #status { margin-top: 20px; color: #00ffff; font-family: monospace; }
+        .id-badge { background: #000; padding: 5px 10px; border-radius: 5px; color: #ff00ff; }
     </style>
 </head>
 <body>
-    <h1>Mac音源 送信機</h1>
-    <button id="startBtn">配信開始 (BlackHoleを選択)</button>
-    <div id="status">Peer準備中...</div>
-    <div id="link"></div>
+    <div class="box">
+        <h1>Mac音源 配信機</h1>
+        <p>1. YouTubeを再生し、出力を「複数出力」にする</p>
+        <button id="startBtn">2. 配信開始 (BlackHoleを選択)</button>
+        <div id="status">Peer準備中...</div>
+    </div>
 
     <script>
-        // IDにランダムな数字を入れて競合を防ぐ
-        const senderId = 'vr-audio-' + Math.floor(Math.random() * 9999);
+        // IDが重ならないよう、実行のたびにユニークなIDを作成
+        const senderId = 'vr-audio-mac-' + Math.floor(Math.random() * 10000);
         const peer = new Peer(senderId);
 
         peer.on('open', (id) => {
-            document.getElementById('status').innerText = "送信機ID: " + id;
-            // Questで開くべきURLを表示
-            const questUrl = window.location.href.replace('sender.html', 'index.html') + '?id=' + id;
-            document.getElementById('link').innerHTML = `QuestでこのURLを開いてください:<br><a href="${questUrl}" style="color:cyan">${questUrl}</a>`;
+            document.getElementById('status').innerHTML = `送信機ID: <span class="id-badge">${id}</span><br><br>準備完了！QuestでURLを開いてください`;
+            console.log('ID:', id);
         });
 
         document.getElementById('startBtn').onclick = async () => {
-            const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-            peer.on('call', call => {
-                call.answer(stream);
-                document.getElementById('status').innerText = "Questに送信中！";
-            });
-            document.getElementById('startBtn').style.display = 'none';
+            try {
+                // 音声(BlackHole)を取得
+                const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+                
+                // Questからの着信を待つ
+                peer.on('call', (call) => {
+                    console.log("Questが接続しました");
+                    call.answer(stream); // 音声を送り返す
+                });
+
+                document.getElementById('startBtn').style.background = "#555";
+                document.getElementById('startBtn').innerText = "配信中...";
+                document.getElementById('status').innerText = "配信中です。Quest側のページをリロードしてください。";
+            } catch (err) {
+                alert("エラー: マイク(BlackHole)の許可が必要です。");
+            }
         };
     </script>
 </body>
