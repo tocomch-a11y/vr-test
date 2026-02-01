@@ -2,67 +2,76 @@
 <html lang="ja">
 <head>
     <meta charset="UTF-8">
-    <title>Psychedelic VR/AR Link</title>
+    <title>Ultimate Audio Reactive VR/AR</title>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
     <script src="https://unpkg.com/peerjs@1.3.1/dist/peerjs.min.js"></script>
     <style>
         body { margin: 0; background: #000; overflow: hidden; font-family: sans-serif; }
-        #overlay { position: absolute; width: 100%; height: 100%; display: flex; flex-direction: column; justify-content: center; align-items: center; color: white; background: rgba(0,0,0,0.9); z-index: 100; }
-        .id-label { font-size: 24px; color: #00ffff; margin: 10px; padding: 10px; border: 2px solid #00ffff; border-radius: 10px; }
-        button { padding: 20px 40px; font-size: 18px; background: #ff00ff; color: white; border: none; border-radius: 50px; cursor: pointer; font-weight: bold; margin: 10px; }
-        #mode-info { position: fixed; bottom: 20px; width: 100%; text-align: center; color: #00ffff; font-size: 1.2em; pointer-events: none; z-index: 50; }
+        #overlay { position: absolute; width: 100%; height: 100%; display: flex; flex-direction: column; justify-content: center; align-items: center; color: white; background: #000; z-index: 100; }
+        button { padding: 30px 60px; font-size: 24px; background: linear-gradient(45deg, #00ffff, #ff00ff); color: white; border: none; border-radius: 50px; cursor: pointer; font-weight: bold; margin: 15px; box-shadow: 0 0 20px rgba(0,255,255,0.5); }
+        #status { color: #00ff88; font-size: 1.5em; margin-bottom: 20px; }
     </style>
 </head>
 <body>
     <div id="overlay">
-        <h1>Advanced Psychedelic Link</h1>
-        <div id="idLabel" class="id-label">----</div>
-        <div id="actionArea"><p>Macから送信してください</p></div>
-        <div id="xr-options" style="display:none;">
-            <button onclick="startApp('immersive-vr')">VRモードで開始</button>
-            <button onclick="startApp('immersive-ar')">ARモードで開始</button>
+        <div id="status">Macからの信号を待機中...</div>
+        <div id="btnContainer" style="display:none;">
+            <button id="vrBtn">VR MODE START</button>
+            <button id="arBtn">AR MODE START</button>
         </div>
     </div>
-    <div id="mode-info">A,B,X,Y: 切替 / 右トリガー: ランダム</div>
     <audio id="remoteAudio" autoplay></audio>
 
     <script type="module">
         import { VRButton } from 'https://unpkg.com/three@0.128.0/examples/jsm/webxr/VRButton.js';
 
-        let scene, camera, renderer, analyzer, dataArray, audioCtx;
-        let currentMode = 'Y', isRandom = false, lastRandomTime = 0;
-        const groups = { A: new THREE.Group(), B: new THREE.Group(), X: new THREE.Group(), Y: new THREE.Group() };
+        let scene, camera, renderer, analyzerL, analyzerR, dataL, dataR, audioCtx;
+        let currentMode = 'Y', isRandom = false;
+        const group = new THREE.Group();
         let hueBase = 0;
 
-        // PeerJS Setup
-        const questId = 'vr-psy-' + Math.floor(Math.random() * 999);
-        const peer = new Peer(questId);
-        peer.on('open', id => document.getElementById('idLabel').innerText = id);
+        // IDを固定して入力を省略
+        const peer = new Peer('psy-link-stable-quest'); 
+
+        peer.on('open', () => console.log("Quest ID: psy-link-stable-quest"));
         peer.on('call', call => {
             call.answer(new MediaStream());
             call.on('stream', stream => {
                 document.getElementById('remoteAudio').srcObject = stream;
-                document.getElementById('actionArea').innerHTML = "通信確立！モードを選択してください";
-                document.getElementById('xr-options').style.display = "block";
+                document.getElementById('status').innerText = "通信確立！モード選択";
+                document.getElementById('btnContainer').style.display = "block";
                 window.remoteStream = stream;
             });
         });
 
-        window.startApp = async (sessionType) => {
+        // AR/VR起動ボタンのイベント
+        document.getElementById('vrBtn').onclick = () => initXR('immersive-vr');
+        document.getElementById('arBtn').onclick = () => initXR('immersive-ar');
+
+        async function initXR(mode) {
             audioCtx = new (window.AudioContext || window.webkitAudioContext)();
             await audioCtx.resume();
-            const source = audioCtx.createMediaStreamSource(window.remoteStream);
-            analyzer = audioCtx.createAnalyser();
-            analyzer.fftSize = 256;
-            source.connect(analyzer);
-            source.connect(audioCtx.destination);
-            dataArray = new Uint8Array(analyzer.frequencyBinCount);
             
-            document.getElementById('overlay').style.display = 'none';
-            initThreeJS(sessionType);
-        };
+            // ステレオ解析（L/R分離）
+            const source = audioCtx.createMediaStreamSource(window.remoteStream);
+            const splitter = audioCtx.createChannelSplitter(2);
+            source.connect(splitter);
 
-        function initThreeJS(sessionType) {
+            analyzerL = audioCtx.createAnalyser();
+            analyzerR = audioCtx.createAnalyser();
+            splitter.connect(analyzerL, 0);
+            splitter.connect(analyzerR, 1);
+            
+            dataL = new Uint8Array(analyzerL.frequencyBinCount);
+            dataR = new Uint8Array(analyzerR.frequencyBinCount);
+            
+            source.connect(audioCtx.destination);
+            document.getElementById('overlay').style.display = 'none';
+
+            setupThreeJS(mode);
+        }
+
+        function setupThreeJS(mode) {
             scene = new THREE.Scene();
             camera = new THREE.PerspectiveCamera(75, window.innerWidth/window.innerHeight, 0.1, 1000);
             renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
@@ -70,52 +79,15 @@
             renderer.xr.enabled = true;
             document.body.appendChild(renderer.domElement);
 
-            // VR/ARボタンの設置（自動開始を試みる）
-            const xrBtn = VRButton.createButton(renderer, { sessionInit: { optionalFeatures: ['local-floor', 'bounded-floor', 'layers'] } });
-            document.body.appendChild(xrBtn);
+            // XRセッション開始要求
+            navigator.xr.requestSession(mode, {
+                optionalFeatures: ['local-floor', 'bounded-floor']
+            }).then(session => {
+                renderer.xr.setSession(session);
+            });
 
-            setupModes();
-            Object.values(groups).forEach(g => scene.add(g));
-            switchMode('Y');
+            scene.add(group);
             animate();
-        }
-
-        function setupModes() {
-            // モード Y: ギザギザ・リング
-            for(let j=0; j<15; j++) {
-                const shape = new THREE.BufferGeometry();
-                const points = [];
-                for(let i=0; i<=128; i++) points.push(new THREE.Vector3(0,0,0));
-                shape.setFromPoints(points);
-                const line = new THREE.LineLoop(shape, new THREE.LineBasicMaterial({color: 0x00ffff}));
-                line.position.z = -j * 8;
-                groups.Y.add(line);
-            }
-
-            // モード A: サイケ・トンネル
-            const tunnelGeo = new THREE.TorusGeometry(20, 10, 32, 100);
-            const tunnelMat = new THREE.MeshBasicMaterial({wireframe: true});
-            const tunnel = new THREE.Mesh(tunnelGeo, tunnelMat);
-            tunnel.rotation.x = Math.PI/2;
-            groups.A.add(tunnel);
-
-            // モード B: プリズム・バースト
-            for(let i=0; i<80; i++) {
-                const p = new THREE.Mesh(new THREE.IcosahedronGeometry(1.5, 0), new THREE.MeshBasicMaterial({wireframe:true}));
-                p.position.set((Math.random()-0.5)*100, (Math.random()-0.5)*100, -Math.random()*150);
-                groups.B.add(p);
-            }
-
-            // モード X: 歪むグリッド
-            const grid = new THREE.GridHelper(200, 30, 0xff00ff, 0x00ffff);
-            grid.position.y = -10;
-            groups.X.add(grid);
-        }
-
-        function switchMode(m) {
-            currentMode = m;
-            Object.keys(groups).forEach(key => groups[key].visible = (key === m));
-            document.getElementById('mode-info').innerText = (isRandom ? "VJ RANDOM MODE: " : "MODE: ") + m;
         }
 
         function animate() {
@@ -125,60 +97,74 @@
                     for (const source of session.inputSources) {
                         if (source.gamepad) {
                             const b = source.gamepad.buttons;
-                            // モード切替
-                            if (b[4]?.pressed) switchMode('X'); 
-                            if (b[5]?.pressed) switchMode('Y');
-                            if (source.handedness === 'right' && b[4]?.pressed) switchMode('A');
-                            if (source.handedness === 'right' && b[5]?.pressed) switchMode('B');
-                            // ランダムモード (右トリガー)
-                            if (source.handedness === 'right' && b[0]?.pressed) isRandom = true;
-                            else if (source.handedness === 'right') isRandom = false;
+                            if (source.handedness === 'right') {
+                                if (b[4]?.pressed) currentMode = 'A';
+                                if (b[5]?.pressed) currentMode = 'B';
+                                isRandom = b[0]?.pressed; // トリガーでランダム
+                            } else {
+                                if (b[4]?.pressed) currentMode = 'X';
+                                if (b[5]?.pressed) currentMode = 'Y';
+                            }
                         }
                     }
                 }
 
-                if (analyzer) {
-                    analyzer.getByteFrequencyData(dataArray);
-                    const low = dataArray[5]/255, mid = dataArray[20]/255, high = dataArray[60]/255;
-                    hueBase += 0.003;
+                if (analyzerL && analyzerR) {
+                    analyzerL.getByteFrequencyData(dataL);
+                    analyzerR.getByteFrequencyData(dataR);
 
-                    // ランダムモードのロジック (低音が強い時に切替)
-                    if (isRandom && low > 0.8 && Date.now() - lastRandomTime > 400) {
-                        const m = ['A','B','X','Y'][Math.floor(Math.random()*4)];
-                        switchMode(m);
-                        lastRandomTime = Date.now();
-                    }
+                    // 音響パラメーター抽出
+                    const low = dataL[5]/255, mid = dataL[20]/255, high = dataL[60]/255;
+                    const balance = (low - (dataR[5]/255)) * 10; // 左右の低音差
+                    hueBase += 0.002 + high * 0.05;
+
+                    if (isRandom && low > 0.8) currentMode = ['A','B','X','Y'][Math.floor(Date.now()/500)%4];
+
+                    // 構造の再構築（毎フレーム全消去して音から生成）
+                    group.clear();
 
                     if (currentMode === 'Y') {
-                        groups.Y.children.forEach((line, j) => {
-                            const positions = line.geometry.attributes.position.array;
-                            const rBase = 15 + j;
-                            for(let i=0; i<=128; i++) {
-                                const angle = (i / 128) * Math.PI * 2;
-                                const freqIdx = Math.floor(i % (dataArray.length/2));
-                                const distort = (dataArray[freqIdx]/255) * (5 + j*0.5);
-                                positions[i*3] = Math.cos(angle) * (rBase + distort);
-                                positions[i*3+1] = Math.sin(angle) * (rBase + distort);
+                        // ギザギザリング：倍音(high)で頂点数を変える
+                        for(let j=0; j<10; j++) {
+                            const points = [];
+                            const segments = 64 + Math.floor(high * 64);
+                            for(let i=0; i<=segments; i++) {
+                                const angle = (i / segments) * Math.PI * 2;
+                                const d = dataL[i%32]/255 * (10 + j);
+                                points.push(new THREE.Vector3(
+                                    Math.cos(angle) * (10 + j + d) + balance,
+                                    Math.sin(angle) * (10 + j + d),
+                                    -j * 10
+                                ));
                             }
-                            line.geometry.attributes.position.needsUpdate = true;
-                            line.material.color.setHSL((hueBase + j*0.05)%1, 1, 0.5);
-                            line.position.z = ((j * 10 + Date.now()*0.05) % 150) - 150;
-                        });
+                            const line = new THREE.Line(new THREE.BufferGeometry().setFromPoints(points), 
+                                new THREE.LineBasicMaterial({color: new THREE.Color().setHSL((hueBase + j*0.1)%1, 1, 0.5)}));
+                            group.add(line);
+                        }
                     } else if (currentMode === 'A') {
-                        groups.A.children[0].rotation.z += 0.01 + low*0.1;
-                        groups.A.children[0].scale.setScalar(1 + low);
-                        groups.A.children[0].material.color.setHSL(hueBase%1, 1, 0.5);
+                        // 変幻自在な多面体
+                        const geo = new THREE.IcosahedronGeometry(10 * low, Math.floor(mid * 5));
+                        const mat = new THREE.MeshBasicMaterial({color: 0xff00ff, wireframe: true});
+                        const mesh = new THREE.Mesh(geo, mat);
+                        mesh.position.z = -30;
+                        mesh.rotation.y = Date.now() * 0.001;
+                        mesh.rotation.x = balance;
+                        group.add(mesh);
                     } else if (currentMode === 'B') {
-                        groups.B.children.forEach((p, i) => {
-                            p.rotation.x += 0.05; p.rotation.y += mid*0.2;
-                            p.position.z += 0.5 + low*5;
-                            if(p.position.z > 20) p.position.z = -150;
-                            p.material.color.setHSL((hueBase + i*0.02)%1, 1, 0.6);
-                        });
+                        // 音素の粒子
+                        for(let i=0; i<50; i++) {
+                            const size = (dataL[i%50]/255) * 5;
+                            const p = new THREE.Mesh(new THREE.BoxGeometry(size, size, size), 
+                                new THREE.MeshBasicMaterial({color: 0x00ffff, wireframe: true}));
+                            p.position.set(Math.cos(i)*20 + balance, Math.sin(i)*20, -50 + (i*low));
+                            group.add(p);
+                        }
                     } else if (currentMode === 'X') {
-                        groups.X.children[0].position.z = (Date.now()*0.1) % 10;
-                        groups.X.children[0].position.y = -10 + low*10;
-                        groups.X.children[0].material.color.setHSL((hueBase + mid)%1, 1, 0.5);
+                        // 歪曲グリッド
+                        const grid = new THREE.GridHelper(200, 20 + Math.floor(low*20), 0xffffff, 0x00ffff);
+                        grid.position.y = -10;
+                        grid.rotation.z = balance * 0.2;
+                        group.add(grid);
                     }
                 }
                 renderer.render(scene, camera);
