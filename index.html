@@ -1,0 +1,121 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <title>Psychedelic VR Tunnel - Quest 3</title>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+    <style>
+        body { margin: 0; background-color: #000; overflow: hidden; font-family: sans-serif; }
+        #overlay { position: absolute; top: 0; left: 0; width: 100%; height: 100%; display: flex; flex-direction: column; justify-content: center; align-items: center; color: white; background: #000; z-index: 100; }
+        #status { margin-top: 20px; color: #00ffff; font-family: monospace; }
+        button { padding: 20px 40px; font-size: 20px; background: linear-gradient(45deg, #00ffff, #ff00ff); color: white; border: none; border-radius: 50px; cursor: pointer; }
+    </style>
+</head>
+<body>
+    <div id="overlay">
+        <h1>Psychedelic VR Tunnel</h1>
+        <div id="btn-container">
+            <button id="startBtn">1. オーディオ許可 & 起動</button>
+        </div>
+        <div id="status">Ready...</div>
+    </div>
+
+    <script type="module">
+        // VRボタンモジュールの読み込み
+        import { VRButton } from 'https://unpkg.com/three@0.128.0/examples/jsm/webxr/VRButton.js';
+
+        let scene, camera, renderer, analyzer, dataArray;
+        let tunnel, particles;
+        const statusEl = document.getElementById('status');
+
+        function initScene() {
+            scene = new THREE.Scene();
+            camera = new THREE.PerspectiveCamera(90, window.innerWidth / window.innerHeight, 0.1, 1000);
+            
+            renderer = new THREE.WebGLRenderer({ antialias: true });
+            renderer.setSize(window.innerWidth, window.innerHeight);
+            renderer.xr.enabled = true;
+            document.body.appendChild(renderer.domElement);
+
+            // 公式のVRボタンを追加（これが一番確実です）
+            document.body.appendChild(VRButton.createButton(renderer));
+
+            // トンネル作成
+            const tunnelGeom = new THREE.CylinderGeometry(30, 30, 500, 64, 100, true);
+            const tunnelMat = new THREE.MeshBasicMaterial({
+                color: 0xff00ff,
+                wireframe: true,
+                side: THREE.DoubleSide,
+                transparent: true,
+                opacity: 0.3
+            });
+            tunnel = new THREE.Mesh(tunnelGeom, tunnelMat);
+            tunnel.rotation.x = Math.PI / 2;
+            scene.add(tunnel);
+
+            // パーティクル作成
+            const pGeom = new THREE.BufferGeometry();
+            const pCount = 15000;
+            const pPos = new Float32Array(pCount * 3);
+            for(let i=0; i<pCount*3; i++) {
+                pPos[i] = (Math.random() - 0.5) * 400;
+            }
+            pGeom.setAttribute('position', new THREE.BufferAttribute(pPos, 3));
+            const pMat = new THREE.PointsMaterial({ size: 0.2, color: 0x00ffff, transparent: true });
+            particles = new THREE.Points(pGeom, pMat);
+            scene.add(particles);
+
+            animate();
+        }
+
+        async function setupAudio() {
+            try {
+                statusEl.innerText = "マイクを探しています...";
+                const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+                const AudioContext = window.AudioContext || window.webkitAudioContext;
+                const audioCtx = new AudioContext();
+                await audioCtx.resume();
+                
+                const source = audioCtx.createMediaStreamSource(stream);
+                analyzer = audioCtx.createAnalyser();
+                analyzer.fftSize = 512;
+                source.connect(analyzer);
+                dataArray = new Uint8Array(analyzer.frequencyBinCount);
+                
+                statusEl.innerText = "接続成功！下の「ENTER VR」を押してください";
+                document.getElementById('startBtn').style.display = 'none';
+            } catch (err) {
+                statusEl.innerText = "エラー: " + err.name;
+                console.error(err);
+            }
+        }
+
+        function animate() {
+            renderer.setAnimationLoop(() => {
+                if (analyzer) {
+                    analyzer.getByteFrequencyData(dataArray);
+                    const bass = dataArray[5] / 255;
+                    const mid = dataArray[40] / 255;
+                    
+                    tunnel.rotation.y += 0.01 + bass * 0.05;
+                    tunnel.scale.set(1 + bass * 0.3, 1, 1 + bass * 0.3);
+                    tunnel.material.color.setHSL((Date.now() * 0.0001 + mid) % 1, 1, 0.5);
+
+                    const pos = particles.geometry.attributes.position.array;
+                    for (let i = 2; i < pos.length; i += 3) {
+                        pos[i] += 0.5 + bass * 3;
+                        if (pos[i] > 200) pos[i] = -200;
+                    }
+                    particles.geometry.attributes.position.needsUpdate = true;
+                }
+                renderer.render(scene, camera);
+            });
+        }
+
+        document.getElementById('startBtn').addEventListener('click', () => {
+            setupAudio();
+            initScene();
+        });
+    </script>
+</body>
+</html>
