@@ -2,83 +2,45 @@
 <html lang="ja">
 <head>
     <meta charset="UTF-8">
-    <title>Psychedelic VR Tunnel v2</title>
+    <title>VR Audio Visualizer - 4 Modes</title>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
     <script src="https://unpkg.com/peerjs@1.3.1/dist/peerjs.min.js"></script>
     <style>
         body { margin: 0; background: #000; overflow: hidden; font-family: sans-serif; }
-        #overlay { position: absolute; top: 0; left: 0; width: 100%; height: 100%; display: flex; flex-direction: column; justify-content: center; align-items: center; color: white; background: #000; z-index: 100; text-align: center; }
+        #overlay { position: absolute; width: 100%; height: 100%; display: flex; flex-direction: column; justify-content: center; align-items: center; color: white; background: #000; z-index: 100; }
         .id-label { font-size: 24px; color: #00ffff; margin: 10px; padding: 10px; border: 2px solid #00ffff; border-radius: 10px; }
-        button { padding: 25px 50px; font-size: 22px; background: linear-gradient(45deg, #ff00ff, #00ffff); color: white; border: none; border-radius: 50px; cursor: pointer; font-weight: bold; box-shadow: 0 0 30px rgba(255,0,255,0.5); }
-        #status { color: #00ff88; margin-bottom: 20px; font-size: 1.2em; }
+        button { padding: 25px 50px; font-size: 22px; background: #00ffff; color: black; border: none; border-radius: 50px; cursor: pointer; font-weight: bold; }
+        #mode-info { position: fixed; bottom: 20px; width: 100%; text-align: center; color: white; font-size: 1.5em; pointer-events: none; z-index: 50; text-shadow: 2px 2px 4px #000; }
     </style>
 </head>
 <body>
     <div id="overlay">
         <h1>Advanced VR Visualizer</h1>
-        <div id="status">Peer初期化中...</div>
         <div id="idLabel" class="id-label">----</div>
         <div id="actionArea"><p>Macから送信してください</p></div>
     </div>
+    <div id="mode-info">ボタン(A/B/X/Y)でモード切替</div>
     <audio id="remoteAudio" autoplay></audio>
 
     <script type="module">
         import { VRButton } from 'https://unpkg.com/three@0.128.0/examples/jsm/webxr/VRButton.js';
 
-        let scene, camera, renderer, analyzer, dataArray, audioCtx, tunnel, particles;
-        let hue = 0;
-        
+        let scene, camera, renderer, analyzer, dataArray, audioCtx, remoteStream;
+        let currentMode = 'A'; // A, B, X, Y
+        const groups = { A: new THREE.Group(), B: new THREE.Group(), X: new THREE.Group(), Y: new THREE.Group() };
+        let hueBase = 0;
+
+        // --- PeerJS Setup ---
         const questId = 'vr-target-' + Math.floor(Math.random() * 999);
         const peer = new Peer(questId);
-
-        peer.on('open', (id) => {
-            document.getElementById('idLabel').innerText = id;
-            document.getElementById('status').innerText = "接続待機中...";
-        });
-
-        // --- 3D空間の構築 ---
-        scene = new THREE.Scene();
-        scene.fog = new THREE.FogExp2(0x000000, 0.005);
-        
-        camera = new THREE.PerspectiveCamera(90, window.innerWidth/window.innerHeight, 0.1, 1000);
-        renderer = new THREE.WebGLRenderer({ antialias: true });
-        renderer.setSize(window.innerWidth, window.innerHeight);
-        renderer.xr.enabled = true;
-        document.body.appendChild(renderer.domElement);
-        document.body.appendChild(VRButton.createButton(renderer));
-
-        // トンネルの作成 (セグメントを増やして滑らかに)
-        const tunnelGeom = new THREE.CylinderGeometry(20, 20, 600, 64, 100, true);
-        const tunnelMat = new THREE.MeshBasicMaterial({ 
-            color: 0xff00ff, 
-            wireframe: true, 
-            side: THREE.DoubleSide,
-            transparent: true,
-            opacity: 0.6
-        });
-        tunnel = new THREE.Mesh(tunnelGeom, tunnelMat);
-        tunnel.rotation.x = Math.PI / 2;
-        scene.add(tunnel);
-
-        // パーティクル星空
-        const pCount = 5000;
-        const pGeom = new THREE.BufferGeometry();
-        const pPos = new Float32Array(pCount * 3);
-        const pVelo = new Float32Array(pCount);
-        for(let i=0; i<pCount*3; i++) pPos[i] = (Math.random() - 0.5) * 600;
-        for(let i=0; i<pCount; i++) pVelo[i] = Math.random() * 2;
-        pGeom.setAttribute('position', new THREE.BufferAttribute(pPos, 3));
-        particles = new THREE.Points(pGeom, new THREE.PointsMaterial({ size: 0.5, color: 0xffffff }));
-        scene.add(particles);
-
-        // --- 音声接続処理 ---
-        peer.on('call', (call) => {
+        peer.on('open', id => document.getElementById('idLabel').innerText = id);
+        peer.on('call', call => {
             call.answer(new MediaStream());
-            call.on('stream', (stream) => {
+            call.on('stream', stream => {
+                remoteStream = stream;
                 document.getElementById('remoteAudio').srcObject = stream;
-                document.getElementById('status').innerText = "通信成功！";
                 const btn = document.createElement('button');
-                btn.innerText = "サイケデリック・スタート";
+                btn.innerText = "連動開始";
                 btn.onclick = () => startAudioEngine(stream);
                 document.getElementById('actionArea').innerHTML = "";
                 document.getElementById('actionArea').appendChild(btn);
@@ -97,44 +59,106 @@
             document.getElementById('overlay').style.display = 'none';
         }
 
-        // --- メインループ (音に合わせてビジュアル変化) ---
+        // --- Three.js Setup ---
+        scene = new THREE.Scene();
+        camera = new THREE.PerspectiveCamera(75, window.innerWidth/window.innerHeight, 0.1, 1000);
+        renderer = new THREE.WebGLRenderer({ antialias: true });
+        renderer.setSize(window.innerWidth, window.innerHeight);
+        renderer.xr.enabled = true;
+        document.body.appendChild(renderer.domElement);
+        document.body.appendChild(VRButton.createButton(renderer));
+
+        // モード別オブジェクト作成
+        setupModeA(); setupModeB(); setupModeX(); setupModeY();
+        Object.values(groups).forEach(g => scene.add(g));
+        switchMode('A');
+
+        // --- モード A: 流れる光のトンネル (酔いにくい直線移動) ---
+        function setupModeA() {
+            const geo = new THREE.CylinderGeometry(20, 20, 400, 32, 40, true);
+            const mat = new THREE.MeshBasicMaterial({ wireframe: true, transparent: true, opacity: 0.5 });
+            const tunnel = new THREE.Mesh(geo, mat);
+            tunnel.rotation.x = Math.PI/2;
+            groups.A.add(tunnel);
+        }
+
+        // --- モード B: 浮遊する立方体群 (空間の広がり) ---
+        function setupModeB() {
+            for(let i=0; i<100; i++) {
+                const box = new THREE.Mesh(new THREE.BoxGeometry(2,2,2), new THREE.MeshBasicMaterial({wireframe:true}));
+                box.position.set((Math.random()-0.5)*100, (Math.random()-0.5)*100, -Math.random()*200);
+                groups.B.add(box);
+            }
+        }
+
+        // --- モード X: 地平線のグリッド (安定感抜群) ---
+        function setupModeX() {
+            const grid = new THREE.GridHelper(200, 40, 0xffffff, 0x444444);
+            grid.position.y = -10;
+            groups.X.add(grid);
+            const sphere = new THREE.Mesh(new THREE.SphereGeometry(5, 32, 32), new THREE.MeshBasicMaterial({wireframe:true}));
+            sphere.position.z = -30;
+            groups.X.add(sphere);
+        }
+
+        // --- モード Y: 音の波形リング (前方に集中) ---
+        function setupModeY() {
+            for(let i=0; i<20; i++) {
+                const ring = new THREE.Mesh(new THREE.TorusGeometry(10 + i, 0.1, 16, 100), new THREE.MeshBasicMaterial());
+                ring.position.z = -i * 10;
+                groups.Y.add(ring);
+            }
+        }
+
+        function switchMode(m) {
+            currentMode = m;
+            Object.keys(groups).forEach(key => groups[key].visible = (key === m));
+            document.getElementById('mode-info').innerText = "Mode: " + m;
+        }
+
+        // コントローラー入力
+        renderer.xr.getController(0).addEventListener('selectstart', () => {}); // 予備
+
         renderer.setAnimationLoop(() => {
-            if (analyzer) {
-                analyzer.getByteFrequencyData(dataArray);
-
-                // 各音域の抽出
-                const low = dataArray[5] / 255;    // 低音 (50-100Hz)
-                const mid = dataArray[20] / 255;   // 中音 (200-500Hz)
-                const high = dataArray[60] / 255;  // 高音 (1kHz+)
-                const all = (low + mid + high) / 3; // 全体平均
-
-                // 1. 形の変化: 低音に合わせて太さが変わる
-                tunnel.scale.set(1 + low * 1.5, 1, 1 + low * 1.5);
-                
-                // 2. 色の変化: 徐々に変化し、高音でさらにフラッシュ
-                hue += 0.002 + (mid * 0.01); 
-                tunnel.material.color.setHSL(hue % 1, 0.8, 0.4 + high * 0.4);
-
-                // 3. 回転の変化: 中音に合わせて回転速度が変わる
-                tunnel.rotation.y += 0.005 + mid * 0.1;
-                tunnel.rotation.z += high * 0.05;
-
-                // 4. パーティクルの動き: 音圧(all)に合わせて加速
-                const positions = particles.geometry.attributes.position.array;
-                for (let i = 2; i < positions.length; i += 3) {
-                    positions[i] += 1.0 + all * 20; // 前方へ進む
-                    if (positions[i] > 300) {
-                        positions[i] = -300; // 奥に戻る
-                        positions[i-1] = (Math.random() - 0.5) * 400; // XYをランダムに再配置
-                        positions[i-2] = (Math.random() - 0.5) * 400;
+            const session = renderer.xr.getSession();
+            if (session) {
+                for (const source of session.inputSources) {
+                    if (source.gamepad) {
+                        const b = source.gamepad.buttons;
+                        if (b[4]?.pressed || b[0]?.pressed) switchMode('A'); // A or Left Trigger
+                        if (b[5]?.pressed || b[1]?.pressed) switchMode('B'); // B or Right Trigger
+                        if (source.handedness === 'left' && b[4]?.pressed) switchMode('X'); // X
+                        if (source.handedness === 'left' && b[5]?.pressed) switchMode('Y'); // Y
                     }
                 }
-                particles.geometry.attributes.position.needsUpdate = true;
-                particles.material.color.setHSL((hue + 0.5) % 1, 1, 0.8);
+            }
 
-                // 5. カメラを少し揺らす
-                camera.position.z = Math.sin(Date.now() * 0.001) * 2;
-                camera.rotation.z = Math.sin(Date.now() * 0.0005) * 0.1;
+            if (analyzer) {
+                analyzer.getByteFrequencyData(dataArray);
+                const low = dataArray[5]/255, mid = dataArray[20]/255, high = dataArray[60]/255;
+                hueBase += 0.002;
+
+                if (currentMode === 'A') {
+                    groups.A.children[0].scale.set(1+low, 1, 1+low);
+                    groups.A.children[0].material.color.setHSL((hueBase + mid)%1, 0.8, 0.5);
+                    groups.A.children[0].position.z = (Date.now()*0.02) % 100;
+                } else if (currentMode === 'B') {
+                    groups.B.children.forEach((c, i) => {
+                        c.rotation.y += 0.01 + low*0.1;
+                        c.material.color.setHSL((hueBase + i*0.01 + high)%1, 1, 0.5);
+                        c.scale.setScalar(1 + mid*2);
+                    });
+                } else if (currentMode === 'X') {
+                    groups.X.children[1].scale.setScalar(1 + low*3);
+                    groups.X.children[1].material.color.setHSL(hueBase%1, 1, 0.5);
+                    groups.X.children[0].position.z = (Date.now()*0.05) % 5;
+                } else if (currentMode === 'Y') {
+                    groups.Y.children.forEach((c, i) => {
+                        const s = 1 + (dataArray[i*5]||0)/255 * 2;
+                        c.scale.set(s, s, 1);
+                        c.material.color.setHSL((hueBase + i*0.05)%1, 0.8, 0.5);
+                    });
+                }
             }
             renderer.render(scene, camera);
         });
