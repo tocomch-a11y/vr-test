@@ -2,42 +2,44 @@
 <html lang="ja">
 <head>
     <meta charset="UTF-8">
-    <title>Quest VR - Sync Fixed</title>
+    <title>Quest VR - Final Audio Fix</title>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
     <script src="https://unpkg.com/peerjs@1.3.1/dist/peerjs.min.js"></script>
     <style>
         body { margin: 0; background: #000; overflow: hidden; font-family: sans-serif; }
         #overlay { position: absolute; top: 0; left: 0; width: 100%; height: 100%; display: flex; flex-direction: column; justify-content: center; align-items: center; color: white; background: #000; z-index: 100; text-align: center; }
-        .id-label { font-size: 24px; color: #00ffff; margin: 10px; padding: 10px; border: 2px solid #00ffff; }
-        button { padding: 25px 50px; font-size: 22px; background: #ff00ff; color: white; border: none; border-radius: 50px; cursor: pointer; font-weight: bold; margin: 20px; }
-        #status { color: #00ff88; font-weight: bold; }
+        .id-label { font-size: 24px; color: #00ffff; margin: 10px; padding: 10px; border: 2px solid #00ffff; border-radius: 10px; }
+        button { padding: 25px 50px; font-size: 22px; background: #ff00ff; color: white; border: none; border-radius: 50px; cursor: pointer; font-weight: bold; box-shadow: 0 0 20px #ff00ff; }
+        #status { color: #00ff88; margin-bottom: 20px; font-size: 1.2em; }
     </style>
 </head>
 <body>
     <div id="overlay">
-        <h1>VR Audio Link</h1>
-        <div id="status">Peer準備中...</div>
+        <h1>VR Audio Visualizer</h1>
+        <div id="status">Peer初期化中...</div>
         <div id="idLabel" class="id-label">----</div>
         <div id="actionArea">
             <p>1. このIDをMacに入力してください</p>
         </div>
     </div>
 
+    <audio id="remoteAudio" autoplay></audio>
+
     <script type="module">
         import { VRButton } from 'https://unpkg.com/three@0.128.0/examples/jsm/webxr/VRButton.js';
 
-        let scene, camera, renderer, analyzer, dataArray, audioCtx, tunnel, remoteStream;
+        let scene, camera, renderer, analyzer, dataArray, audioCtx, tunnel;
+        let streamReceived = null;
         
-        // ID生成
         const questId = 'vr-target-' + Math.floor(Math.random() * 999);
         const peer = new Peer(questId);
 
         peer.on('open', (id) => {
             document.getElementById('idLabel').innerText = id;
-            document.getElementById('status').innerText = "待機中...";
+            document.getElementById('status').innerText = "接続待機中...";
         });
 
-        // Scene設定
+        // 3Dシーン構築 (変更なし)
         scene = new THREE.Scene();
         camera = new THREE.PerspectiveCamera(90, window.innerWidth/window.innerHeight, 0.1, 1000);
         renderer = new THREE.WebGLRenderer({ antialias: true });
@@ -51,47 +53,63 @@
         tunnel.rotation.x = Math.PI / 2;
         scene.add(tunnel);
 
-        // Macからの着信
+        // Macからの着信処理
         peer.on('call', (call) => {
-            call.answer(new MediaStream()); // 返信用空ストリーム
+            call.answer(new MediaStream()); // 自分のマイクは空で返す
             call.on('stream', (stream) => {
-                remoteStream = stream;
-                document.getElementById('status').innerText = "通信確立！";
-                // 通信がきたら、解析開始ボタンを出す
+                streamReceived = stream;
+                document.getElementById('status').innerText = "通信成功！";
+                
+                // 隠しオーディオ要素にストリームをセット
+                const audioEl = document.getElementById('remoteAudio');
+                audioEl.srcObject = stream;
+
+                // ボタンを表示
                 const btn = document.createElement('button');
-                btn.innerText = "2. 連動を開始してVRへ";
-                btn.onclick = startAnalysis;
+                btn.innerText = "2. 連動を開始する";
+                btn.onclick = () => startAudioEngine(stream);
                 document.getElementById('actionArea').innerHTML = "";
                 document.getElementById('actionArea').appendChild(btn);
             });
         });
 
-        async function startAnalysis() {
-            if (!remoteStream) return;
-            
-            // AudioContextの強制起動
-            audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+        async function startAudioEngine(stream) {
+            // AudioContextの生成と再開
+            if (!audioCtx) {
+                audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+            }
             await audioCtx.resume();
 
-            // 音声解析の接続
-            const source = audioCtx.createMediaStreamSource(remoteStream);
+            // 解析器の設定
+            const source = audioCtx.createMediaStreamSource(stream);
             analyzer = audioCtx.createAnalyser();
-            analyzer.fftSize = 256;
+            analyzer.fftSize = 128; // 解析を軽く、反応を速く
             source.connect(analyzer);
-            source.connect(audioCtx.destination);
+            
+            // スピーカーに出力 (Questの音を出す)
+            analyzer.connect(audioCtx.destination);
             
             dataArray = new Uint8Array(analyzer.frequencyBinCount);
             
-            // UIを消してVR開始
+            // UIを消してVRへ
             document.getElementById('overlay').style.display = 'none';
         }
 
         renderer.setAnimationLoop(() => {
             if (analyzer) {
                 analyzer.getByteFrequencyData(dataArray);
-                const volume = (dataArray[10] / 255) * 8; // 感度強め
+                
+                // 音の強さを計算 (平均値を取得)
+                let sum = 0;
+                for(let i = 0; i < dataArray.length; i++) {
+                    sum += dataArray[i];
+                }
+                const average = sum / dataArray.length;
+                const volume = (average / 255) * 12; // 感度を大幅アップ
+
+                // トンネルの動きに反映
                 tunnel.scale.set(1 + volume, 1, 1 + volume);
-                tunnel.rotation.y += 0.01 + (volume * 0.05);
+                tunnel.rotation.y += 0.01 + (volume * 0.1);
             }
             renderer.render(scene, camera);
         });
