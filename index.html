@@ -2,31 +2,39 @@
 <html>
 <head>
     <meta charset="UTF-8">
-    <title>Psy-AR Random 24</title>
+    <title>Psy-AR Ultimate Link</title>
     <style>
         body { margin: 0; background: #000; overflow: hidden; }
-        #arBtn { position: fixed; top: 50%; left: 50%; transform: translate(-50%,-50%); padding: 60px 100px; font-size: 30px; background: #ff00ff; color: #fff; border: none; border-radius: 20px; z-index: 10000; font-weight: bold; cursor: pointer; }
+        #arBtn { position: fixed; top: 50%; left: 50%; transform: translate(-50%,-50%); padding: 60px; font-size: 30px; background: #00ffff; border: none; border-radius: 20px; z-index: 10000; cursor: pointer; }
     </style>
 </head>
 <body>
-    <button id="arBtn">ENTER PSYCHEDELIC</button>
+    <button id="arBtn">START SENSING</button>
     <audio id="audio" autoplay playsinline></audio>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
     <script src="https://unpkg.com/peerjs@1.3.1/dist/peerjs.min.js"></script>
     <script>
-        let scene, camera, renderer, mesh, xrRefSpace;
-        let geometries = [];
+        let scene, camera, renderer, mesh, xrRefSpace, geometries = [];
         let macData = { low: 0, mid: 0, high: 0, trigger: false };
         let lastSwitch = 0, hue = 0;
         const audio = document.getElementById('audio');
 
-        // Generate 24 Random Variations
-        for(let i=0; i<24; i++) {
-            const type = i % 4;
-            if(type==0) geometries.push(new THREE.TorusKnotGeometry(0.4, 0.1, 128, 16, i+1, i+3));
-            else if(type==1) geometries.push(new THREE.IcosahedronGeometry(0.5, i%3));
-            else if(type==2) geometries.push(new THREE.TorusGeometry(0.5, 0.2, 16, i+10));
-            else geometries.push(new THREE.OctahedronGeometry(0.5, i%2));
+        // 12 High-Complexity Geometries
+        function createGeos() {
+            geometries = [
+                new THREE.TorusKnotGeometry(0.4, 0.12, 200, 32, 2, 3),
+                new THREE.IcosahedronGeometry(0.5, 2),
+                new THREE.TorusGeometry(0.5, 0.2, 32, 100),
+                new THREE.DodecahedronGeometry(0.5, 1),
+                new THREE.TorusKnotGeometry(0.4, 0.05, 256, 32, 7, 11),
+                new THREE.OctahedronGeometry(0.6, 0),
+                new THREE.CylinderGeometry(0, 0.5, 1, 4, 1, true),
+                new THREE.TorusKnotGeometry(0.3, 0.15, 128, 32, 3, 4),
+                new THREE.SphereGeometry(0.5, 8, 8),
+                new THREE.BoxGeometry(0.6, 0.6, 0.6, 6, 6, 6),
+                new THREE.TorusGeometry(0.4, 0.3, 16, 6),
+                new THREE.CapsuleGeometry(0.3, 0.5, 8, 16)
+            ];
         }
 
         const btn = document.getElementById('arBtn');
@@ -39,7 +47,9 @@
                     renderer.setSize(window.innerWidth, window.innerHeight);
                     scene = new THREE.Scene();
                     camera = new THREE.PerspectiveCamera(70, window.innerWidth/window.innerHeight, 0.01, 20);
-                    mesh = new THREE.Mesh(geometries[0], new THREE.MeshBasicMaterial({ wireframe: true, color: 0xffffff }));
+                    
+                    createGeos();
+                    mesh = new THREE.Mesh(geometries[0], new THREE.MeshBasicMaterial({ wireframe: true }));
                     scene.add(mesh);
 
                     session.requestReferenceSpace('local-floor').then(ref => {
@@ -65,41 +75,61 @@
 
         function render(time, frame) {
             if (!frame || !xrRefSpace) return;
-            hue += 0.005;
+            hue += 0.002;
 
-            // Random Switch on Bass Kick
-            if (macData.trigger && (Date.now() - lastSwitch > 300)) {
+            // Random Switch on Beat
+            if (macData.trigger && (Date.now() - lastSwitch > 400)) {
                 mesh.geometry = geometries[Math.floor(Math.random() * geometries.length)];
                 lastSwitch = Date.now();
             }
 
-            // Gaze Capture
-            const look = new THREE.Vector3(0, 0, -1).applyQuaternion(camera.quaternion);
-            
-            // Interaction Loop
-            let handPos = null;
+            // --- Gaze Tracking Fix ---
+            // カメラの向きから正面ベクトルを取得し、その方向にメッシュを誘導
+            const gazeQuat = camera.quaternion;
+            const gazeDir = new THREE.Vector3(0, 0, -1).applyQuaternion(gazeQuat);
+            const gazeTarget = new THREE.Vector3().copy(camera.position).add(gazeDir.multiplyScalar(0.7));
+
+            // --- Multi-Finger Tracking ---
+            let totalFingerPos = new THREE.Vector3();
+            let fingerCount = 0;
+            let fingerSpread = 0;
+
             for (const input of frame.session.inputSources) {
                 if (input.hand) {
-                    const pose = frame.getJointPose(input.hand.get('index-finger-tip'), xrRefSpace);
-                    if (pose) handPos = pose.transform.position;
+                    // 全ての指先（tips）を取得
+                    const tips = ['thumb-tip', 'index-finger-tip', 'middle-finger-tip', 'ring-finger-tip', 'pinky-tip'];
+                    tips.forEach(name => {
+                        const joint = input.hand.get(name);
+                        const pose = joint ? frame.getJointPose(joint, xrRefSpace) : null;
+                        if (pose) {
+                            totalFingerPos.add(pose.transform.position);
+                            fingerCount++;
+                        }
+                    });
                 }
             }
 
-            if (handPos) {
-                const target = new THREE.Vector3(handPos.x, handPos.y, handPos.z).add(look.clone().multiplyScalar(0.2));
-                mesh.position.lerp(target, 0.2);
+            if (fingerCount > 0) {
+                // 指先の平均位置を計算
+                const avgPos = totalFingerPos.divideScalar(fingerCount);
+                // 視線のターゲットと指先の位置をブレンド（視線に追従しつつ手元に引き寄せる）
+                mesh.position.lerp(avgPos.lerp(gazeTarget, 0.3), 0.2);
+                
+                // 指の数（手の開き具合）でワイヤーフレームの太さや複雑さをシミュレート
+                mesh.rotation.y += 0.05 + (fingerCount * 0.02) + macData.high;
             } else {
-                const idle = new THREE.Vector3(0, 0, -0.8).applyQuaternion(camera.quaternion).add(camera.position);
-                mesh.position.lerp(idle, 0.05);
+                // 手が消えたら視線の正面に移動
+                mesh.position.lerp(gazeTarget, 0.05);
+                mesh.rotation.y += 0.01;
             }
 
-            // Visual Warp by Look & Audio
-            mesh.rotation.x += look.y * 0.2 + (macData.high * 0.5);
-            mesh.rotation.y += look.x * 0.2 + (macData.low * 0.5);
-            mesh.scale.setScalar(0.6 + (macData.low * 2.5));
+            // Visual Deform
+            mesh.rotation.x += macData.mid * 0.2;
+            mesh.scale.setScalar(0.5 + (macData.low * 2.5) + (fingerCount * 0.05));
             
-            // Psychedelic Color
-            mesh.material.color.setHSL((hue + macData.mid) % 1, 1, 0.5);
+            // Psychedelic Coloring
+            mesh.material.color.setHSL((hue + macData.mid) % 1, 1, 0.5 + macData.high * 0.3);
+            
             renderer.render(scene, camera);
         }
     </script>
