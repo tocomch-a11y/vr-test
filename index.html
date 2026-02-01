@@ -1,91 +1,22 @@
-<!DOCTYPE html>
-<html lang="ja">
-<head>
-    <meta charset="UTF-8">
-    <title>Psy-XR Final</title>
-    <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
-    <script src="https://unpkg.com/peerjs@1.3.1/dist/peerjs.min.js"></script>
-    <style>
-        body { margin: 0; background: #000; overflow: hidden; font-family: sans-serif; }
-        #ui { position: fixed; top: 0; left: 0; width: 100%; height: 100%; display: flex; flex-direction: column; justify-content: center; align-items: center; background: #000; z-index: 1000; }
-        #arBtn { padding: 40px 60px; font-size: 30px; background: #333; color: #fff; border: 4px solid #fff; border-radius: 20px; cursor: not-allowed; }
-        #arBtn.active { background: #00ffff; color: #000; cursor: pointer; }
-        #status { color: #0f0; margin-top: 20px; font-size: 16px; text-align: center; }
-    </style>
-</head>
-<body>
-    <div id="ui">
-        <button id="arBtn" disabled>MACを待機中...</button>
-        <div id="status">通信初期化中...</div>
-    </div>
-    <audio id="remoteAudio" autoplay playsinline></audio>
-
-    <script>
-        const btn = document.getElementById('arBtn');
-        const status = document.getElementById('status');
-        const audio = document.getElementById('remoteAudio');
-        let macData = { low: 0, mid: 0, high: 0, trigger: false };
-        let renderer, scene, camera, mesh, geometries = [];
-        let currentIdx = 0, lastSwitch = 0, hue = 0, xrRefSpace;
-
-        // 1. Peer設定（IDをquest-receiverに固定）
-        const peer = new Peer('quest-receiver');
-        peer.on('open', () => status.innerText = "Macの「CONNECT」を押してください");
-        peer.on('connection', conn => {
-            status.innerText = "Macと接続完了！\n下のボタンを押して開始";
-            btn.disabled = false; btn.classList.add('active'); btn.innerText = "AR開始";
-            conn.on('data', data => { macData = data; });
-        });
-        peer.on('call', call => {
-            call.answer(new MediaStream());
-            call.on('stream', s => { audio.srcObject = s; audio.play(); });
-        });
-
-        // 2. グラフィック初期化
-        function initThree() {
-            scene = new THREE.Scene();
-            camera = new THREE.PerspectiveCamera(70, window.innerWidth/window.innerHeight, 0.01, 20);
-            renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
-            renderer.xr.enabled = true;
-            renderer.setSize(window.innerWidth, window.innerHeight);
-
-            geometries = [
-                new THREE.TorusKnotGeometry(0.3, 0.1, 100, 16),
-                new THREE.IcosahedronGeometry(0.4, 1),
-                new THREE.TorusGeometry(0.5, 0.1, 16, 100),
-                new THREE.SphereGeometry(0.4, 32, 16)
-            ];
-            // 最初はワイヤーフレームで見やすく
-            mesh = new THREE.Mesh(geometries[0], new THREE.MeshBasicMaterial({wireframe: true, color: 0x00ffff}));
-            
-            // 重要：AR開始時に自分の「すぐ目の前」に配置（高さ1m、前方0.5m）
-            mesh.position.set(0, 1, -0.5); 
-            scene.add(mesh);
-        }
-
-        // 3. AR開始処理
-        btn.onclick = async () => {
-            if (!renderer) initThree();
-            audio.play().catch(() => {}); // 音声許可
-
-            if (navigator.xr) {
-                try {
-                    const session = await navigator.xr.requestSession('immersive-ar', { 
-                        requiredFeatures: ['local-floor', 'hand-tracking'] 
-                    });
-                    await renderer.xr.setSession(session);
-                    xrRefSpace = await session.requestReferenceSpace('local-floor');
-                    document.getElementById('ui').style.display = 'none';
-                    renderer.setAnimationLoop(render);
-                } catch (e) {
-                    alert("AR起動エラー: " + e.message);
-                }
+// --- 追加：ARモードに入った後に画面をタップすると音を強制的に出す ---
+        window.onclick = () => {
+            if (audio) {
+                audio.play().then(() => {
+                    console.log("Audio playing successfully");
+                }).catch(e => {
+                    console.log("Audio play failed:", e);
+                });
             }
         };
 
         function render(time, frame) {
             if (!frame) return;
             hue += 0.005;
+
+            // --- 重要：ここで常に音量のミュートを解除し、再生を試みる ---
+            if (audio.srcObject && audio.paused) {
+                audio.play().catch(() => { /* ユーザー操作待ち */ });
+            }
 
             // 音のトリガーで形をランダム変更
             if (macData.trigger && (Date.now() - lastSwitch > 700)) {
@@ -109,18 +40,11 @@
                 }
             }
 
-            // 手が見えていない時は、その場で回転して待機
-            if (!handDetected) {
-                mesh.rotation.y += 0.01;
-            }
+            if (!handDetected) mesh.rotation.y += 0.01;
 
-            // 音に合わせてスケールと色を変化
             const s = 1 + (macData.low * 2);
             mesh.scale.setScalar(s);
             mesh.material.color.setHSL((hue + macData.mid) % 1, 0.8, 0.5);
 
             renderer.render(scene, camera);
         }
-    </script>
-</body>
-</html>
