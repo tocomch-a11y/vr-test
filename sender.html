@@ -1,82 +1,85 @@
-// --- Global reference for Reference Space ---
-let xrRefSpace = null;
-const audio = document.getElementById('remoteAudio');
-
-// --- Force Audio Play on AR Screen Tap ---
-window.addEventListener('click', () => {
-    if (audio && audio.srcObject) {
-        audio.muted = false; // Ensure it's not muted
-        audio.play()
-            .then(() => console.log("Audio playing"))
-            .catch(e => console.error("Audio failed", e));
-    }
-});
-
-function setupXR(session) {
-    // ... (previous setup code) ...
-    
-    // Capture the reference space for the render loop
-    session.requestReferenceSpace('local-floor').then((refSpace) => {
-        xrRefSpace = refSpace;
-        renderer.xr.setSession(session);
-        renderer.setAnimationLoop(render);
-    });
-}
-
-function render(time, frame) {
-    if (!frame || !xrRefSpace) return;
-    hue += 0.005;
-
-    // --- Audio Auto-Resume ---
-    if (audio.srcObject && audio.paused) {
-        audio.play().catch(() => { /* Still waiting for user interaction */ });
-    }
-
-    // --- Mode Switching (Mac Trigger) ---
-    if (macData.trigger && (Date.now() - lastSwitch > 700)) {
-        currentIdx = (currentIdx + 1) % geometries.length;
-        mesh.geometry = geometries[currentIdx];
-        lastSwitch = Date.now();
-    }
-
-    // --- Hand Tracking & Lerp Smoothing ---
-    const session = frame.session;
-    let handDetected = false;
-
-    for (const input of session.inputSources) {
-        if (input.hand) {
-            const indexTip = input.hand.get('index-finger-tip');
-            const pose = frame.getJointPose(indexTip, xrRefSpace);
-            
-            if (pose) {
-                // Smoothly follow the index finger
-                const targetPos = new THREE.Vector3().copy(pose.transform.position);
-                mesh.position.lerp(targetPos, 0.15);
-                
-                // Optional: Smoothly follow hand orientation
-                const targetQuat = new THREE.Quaternion().copy(pose.transform.orientation);
-                mesh.quaternion.slerp(targetQuat, 0.1);
-                
-                handDetected = true;
-            }
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>Mac Audio Controller</title>
+    <style>
+        body { background: #111; color: #0f0; font-family: monospace; text-align: center; padding: 50px; }
+        #btn { 
+            padding: 30px 60px; font-size: 24px; cursor: pointer; 
+            background: #00ff00; border: none; border-radius: 10px; font-weight: bold;
         }
-    }
+        #status { margin-top: 20px; font-size: 18px; color: #00ffff; }
+    </style>
+</head>
+<body>
+    <h1>MAC AUDIO SENDER</h1>
+    <button id="btn">START ANALYSIS & SEND</button>
+    <div id="status">Status: Standby</div>
 
-    // Default rotation if no hand is visible
-    if (!handDetected) {
-        mesh.rotation.y += 0.01;
-        // Float in front of the camera if lost
-        const headPos = new THREE.Vector3(0, 0, -1).applyQuaternion(camera.quaternion);
-        mesh.position.lerp(headPos.add(camera.position), 0.05);
-    }
+    <script src="https://unpkg.com/peerjs@1.3.1/dist/peerjs.min.js"></script>
+    <script>
+        const btn = document.getElementById('btn');
+        const status = document.getElementById('status');
+        
+        // Use a random ID for Mac, it will connect to the Quest's 'quest-receiver'
+        const peer = new Peer('mac-sender-' + Math.floor(Math.random() * 999));
+        let dataConn;
 
-    // --- Audio Reactive Visuals ---
-    const s = 1 + (macData.low * 3);
-    mesh.scale.setScalar(s);
-    
-    // Psychedelic color shifting
-    mesh.material.color.setHSL((hue + macData.mid) % 1, 0.8, 0.5 + macData.low * 0.2);
-    mesh.material.opacity = 0.5 + (macData.low * 0.5);
+        btn.onclick = async () => {
+            try {
+                status.innerText = "Requesting Microphone...";
+                const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+                
+                // Audio Setup
+                const audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+                const source = audioCtx.createMediaStreamSource(stream);
+                const analyzer = audioCtx.createAnalyser();
+                analyzer.fftSize = 256;
+                source.connect(analyzer);
+                const dataArray = new Uint8Array(analyzer.frequencyBinCount);
 
-    renderer.render(scene, camera);
-}
+                status.innerText = "Connecting to Quest...";
+
+                // Send Audio Stream
+                peer.call('quest-receiver', stream);
+
+                // Send Data Connection
+                dataConn = peer.connect('quest-receiver');
+
+                dataConn.on('open', () => {
+                    status.innerText = "LINK ACTIVE: STREAMING DATA";
+                    
+                    function loop() {
+                        analyzer.getByteFrequencyData(dataArray);
+                        
+                        // Simple frequency mapping
+                        const low = dataArray[4] / 255;    // Bass
+                        const mid = dataArray[15] / 255;   // Mid
+                        const high = dataArray[40] / 255;  // Highs
+
+                        if (dataConn.open) {
+                            dataConn.send({
+                                low: low,
+                                mid: mid,
+                                high: high,
+                                trigger: low > 0.82 // Bass kick trigger
+                            });
+                        }
+                        requestAnimationFrame(loop);
+                    }
+                    loop();
+                });
+
+                dataConn.on('close', () => {
+                    status.innerText = "Connection Closed. Reconnecting...";
+                });
+
+            } catch (err) {
+                status.innerText = "Error: " + err.message;
+                console.error(err);
+            }
+        };
+    </script>
+</body>
+</html>
