@@ -2,21 +2,20 @@
 <html>
 <head>
     <meta charset="UTF-8">
-    <title>PSY-AR STABLE START</title>
+    <title>PSY-AR RESET & START</title>
     <style>
         body { margin: 0; background: #000; overflow: hidden; font-family: sans-serif; }
         #arBtn { 
             position: fixed; top: 50%; left: 50%; transform: translate(-50%,-50%); 
-            padding: 40px 60px; font-size: 24px; background: #00ff00; color: #000; 
-            border: none; border-radius: 50px; z-index: 99999; 
-            font-weight: bold; cursor: pointer; display: none; /* 最初は隠す */
+            padding: 50px; font-size: 30px; background: #00ff00; color: #000; 
+            border: none; border-radius: 30px; z-index: 1000; font-weight: bold; cursor: pointer;
         }
-        #msg { position: fixed; top: 40%; width: 100%; text-align: center; color: #fff; z-index: 99998; }
+        #status { position: fixed; bottom: 20px; width: 100%; text-align: center; color: #555; font-size: 14px; }
     </style>
 </head>
 <body>
-    <div id="msg">BROWSER INITIALIZING...</div>
-    <button id="arBtn">ENTER AR EXPERIENCE</button>
+    <button id="arBtn">START AR</button>
+    <div id="status">Waiting for system...</div>
     <audio id="audio" autoplay playsinline></audio>
 
     <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
@@ -28,44 +27,52 @@
         window.mD = { low: 0, mid: 0, high: 0, trigger: false };
         let lastSwitch = 0, hue = 0;
 
-        const btn = document.getElementById('arBtn');
-        const msg = document.getElementById('msg');
-
-        // 1. WebXRが利用可能かチェックしてからボタンを表示
-        if (navigator.xr) {
-            navigator.xr.isSessionSupported('immersive-ar').then((supported) => {
-                if (supported) {
-                    btn.style.display = 'block';
-                    msg.style.display = 'none';
-                } else {
-                    msg.innerText = "AR Mode not supported on this browser.";
-                }
-            });
-        } else {
-            msg.innerText = "WebXR not found. Use HTTPS.";
+        // 12パターンの形状を事前に生成
+        function initGeos() {
+            geometries = [
+                new THREE.TorusKnotGeometry(0.3, 0.1, 128, 16, 2, 3),
+                new THREE.IcosahedronGeometry(0.5, 2),
+                new THREE.TorusGeometry(0.4, 0.2, 32, 100),
+                new THREE.OctahedronGeometry(0.6, 0),
+                new THREE.TorusKnotGeometry(0.4, 0.05, 200, 32, 7, 11),
+                new THREE.DodecahedronGeometry(0.5, 1),
+                new THREE.BoxGeometry(0.5, 0.5, 0.5, 10, 10, 10),
+                new THREE.SphereGeometry(0.5, 16, 16),
+                new THREE.TorusKnotGeometry(0.3, 0.15, 128, 32, 3, 4),
+                new THREE.CylinderGeometry(0.4, 0.4, 1, 32, 1, true),
+                new THREE.TorusGeometry(0.4, 0.3, 12, 6),
+                new THREE.CapsuleGeometry(0.3, 0.4, 8, 16)
+            ];
         }
 
-        function initGeos() {
-            geometries = [];
-            for(let i=0; i<12; i++) {
-                geometries.push(new THREE.TorusKnotGeometry(0.3, 0.08, 128, 16, i+1, i+4));
+        const btn = document.getElementById('arBtn');
+        const status = document.getElementById('status');
+
+        // AR起動関数
+        async function startAR() {
+            try {
+                // 以前のセッションのゴミを掃除するため、optionalFeaturesで柔軟に要求
+                const session = await navigator.xr.requestSession('immersive-ar', {
+                    optionalFeatures: ['local-floor', 'hand-tracking']
+                });
+                onSessionStarted(session);
+            } catch (e) {
+                status.innerText = "Error: " + e.message;
+                // 致命的なエラー時は3秒後に自動リロードしてシステムをクリーンにする
+                setTimeout(() => window.location.reload(), 3000);
             }
         }
 
         btn.onclick = () => {
-            // エラー回避のため features を optional に移動
-            navigator.xr.requestSession('immersive-ar', {
-                optionalFeatures: ['local-floor', 'hand-tracking']
-            }).then(onSessionStarted).catch(err => {
-                console.error(err);
-                alert("起動失敗。一度ページをリロードして、数秒待ってから押してください。\nError: " + err.message);
-            });
+            btn.style.display = 'none';
+            status.innerText = "Initializing AR...";
+            startAR();
         };
 
         function onSessionStarted(session) {
-            btn.style.display = 'none';
             renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
             renderer.xr.enabled = true;
+            renderer.setPixelRatio(window.devicePixelRatio);
             renderer.setSize(window.innerWidth, window.innerHeight);
             document.body.appendChild(renderer.domElement);
 
@@ -76,9 +83,7 @@
             mesh = new THREE.Mesh(geometries[0], new THREE.MeshBasicMaterial({ wireframe: true, color: 0x00ff00 }));
             scene.add(mesh);
 
-            // 参照空間の取得（local-floorがダメな場合はviewerを試みる）
-            const refType = session.isReferenceSpaceTypeSupported('local-floor') ? 'local-floor' : 'viewer';
-            session.requestReferenceSpace(refType).then(ref => {
+            session.requestReferenceSpace('local-floor').then(ref => {
                 xrRefSpace = ref;
                 renderer.xr.setSession(session);
                 initPeer();
@@ -92,17 +97,14 @@
             const peer = new Peer('quest-receiver');
             peer.on('connection', conn => {
                 conn.on('data', d => {
-                    window.mD.low = d.low || 0;
-                    window.mD.mid = d.mid || 0;
-                    window.mD.high = d.high || 0;
-                    window.mD.trigger = !!d.trigger;
+                    window.mD = { ...window.mD, ...d };
                 });
             });
             peer.on('call', call => {
                 call.answer(new MediaStream());
                 call.on('stream', s => { 
                     const aud = document.getElementById('audio');
-                    aud.srcObject = s; aud.play().catch(() => {});
+                    aud.srcObject = s; aud.play(); 
                 });
             });
         }
@@ -112,11 +114,13 @@
             hue += 0.005;
             const d = window.mD;
 
+            // 音トリガー形状変化
             if (d.trigger && (Date.now() - lastSwitch > 300)) {
                 mesh.geometry = geometries[Math.floor(Math.random() * geometries.length)];
                 lastSwitch = Date.now();
             }
 
+            // ハンドトラッキング & 視線追従
             const gaze = new THREE.Vector3(0, 0, -0.6).applyQuaternion(camera.quaternion).add(camera.position);
             let handPos = new THREE.Vector3(), count = 0;
 
@@ -132,14 +136,14 @@
             }
 
             if (count > 0) {
-                mesh.position.lerp(handPos, 0.2);
+                mesh.position.lerp(handPos, 0.2); // 手の位置へ
                 mesh.rotation.y += 0.05 + (d.high * 2.0);
             } else {
-                mesh.position.lerp(gaze, 0.1);
+                mesh.position.lerp(gaze, 0.1); // 手がない時は視線の先
                 mesh.rotation.y += 0.02;
             }
 
-            mesh.scale.setScalar(0.5 + (d.low * 4.0));
+            mesh.scale.setScalar(0.4 + (d.low * 4.0));
             mesh.material.color.setHSL((hue + d.mid) % 1, 1, 0.5);
             renderer.render(scene, camera);
         }
