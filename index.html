@@ -2,65 +2,43 @@
 <html>
 <head>
     <meta charset="UTF-8">
-    <title>PSY-AR FORCE</title>
+    <title>AR TEST</title>
     <style>
-        body { margin: 0; background: #000; color: #fff; font-family: sans-serif; text-align: center; }
-        #arBtn { 
-            margin-top: 40vh; padding: 40px 60px; font-size: 25px; 
-            background: #fff; border: 4px solid #0f0; border-radius: 15px; font-weight: bold;
-        }
+        body { margin: 0; background: #000; text-align: center; }
+        button { margin-top: 40vh; padding: 30px; font-size: 20px; z-index: 100; position: relative; }
     </style>
 </head>
 <body>
-    <button id="arBtn">ARを強制起動</button>
-    <p id="st">待機中...</p>
-
+    <button id="btn">ENTER AR</button>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
-
     <script>
-        const btn = document.getElementById('arBtn');
-        const st = document.getElementById('st');
-
-        async function startAR() {
-            st.innerText = "セッション要求中...";
+        document.getElementById('btn').onclick = async () => {
+            if (!navigator.xr) return alert("HTTPS環境で開いてください");
+            
             try {
-                // 1. エラー回避のため一切の追加機能を排除
                 const session = await navigator.xr.requestSession('immersive-ar');
-                
-                // 2. 成功したら即座にレンダラー作成
-                const renderer = new THREE.WebGLRenderer({ antialias: false, alpha: true });
+                const renderer = new THREE.WebGLRenderer({ alpha: true });
                 renderer.xr.enabled = true;
                 document.body.appendChild(renderer.domElement);
-                btn.style.display = 'none';
-
-                const scene = new THREE.Scene();
-                const camera = new THREE.PerspectiveCamera(70, window.innerWidth/window.innerHeight, 0.01, 10);
                 
-                // 3. テスト用の青い箱
+                const scene = new THREE.Scene();
+                const camera = new THREE.PerspectiveCamera();
                 const cube = new THREE.Mesh(
                     new THREE.BoxGeometry(0.2, 0.2, 0.2), 
-                    new THREE.MeshBasicMaterial({ color: 0x00ffff, wireframe: true })
+                    new THREE.MeshBasicMaterial({ color: 0x00ff00, wireframe: true })
                 );
                 cube.position.set(0, 0, -0.5);
                 scene.add(cube);
 
-                const refSpace = await session.requestReferenceSpace('viewer');
+                const ref = await session.requestReferenceSpace('viewer');
                 await renderer.xr.setSession(session);
+                renderer.setAnimationLoop(() => renderer.render(scene, camera));
                 
-                renderer.setAnimationLoop(() => {
-                    cube.rotation.y += 0.02;
-                    renderer.render(scene, camera);
-                });
-
-                session.addEventListener('end', () => window.location.reload());
+                document.getElementById('btn').style.display = 'none';
             } catch (e) {
-                // ここでエラー内容を表示
-                st.style.color = "red";
-                st.innerText = "エラー: " + e.message;
-                console.error(e);
+                alert("エラー詳細: " + e.message);
             }
-        }
-        btn.onclick = startAR;
+        };
     </script>
 </body>
 </html>
