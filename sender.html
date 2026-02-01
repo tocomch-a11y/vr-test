@@ -1,20 +1,53 @@
 <!DOCTYPE html>
 <html>
-<head><title>Mac Sender</title></head>
-<body style="background:#1a1a1a; color:white; text-align:center; padding:50px;">
-    <h1>Mac Sender (Auto ID)</h1>
-    <button id="btn" style="padding:20px; font-size:20px; cursor:pointer;">1. 配信開始 (VB-CABLE)</button>
-    <p id="status">Questでページを開くのを待っています...</p>
+<body style="background:#1a1a1a; color:white; font-family:sans-serif; text-align:center;">
+    <h1>Mac Audio Processor (LSD-Link)</h1>
+    <button id="btn" style="padding:20px; font-size:20px;">1. 音声と解析データの送信開始</button>
+    <p id="status">Questの接続を待機中...</p>
+
     <script src="https://unpkg.com/peerjs@1.3.1/dist/peerjs.min.js"></script>
     <script>
         const peer = new Peer('psy-link-stable-mac');
+        let dataConnection;
+
         document.getElementById('btn').onclick = async () => {
             const stream = await navigator.mediaDevices.getUserMedia({ 
-                audio: { echoCancellation: false, noiseSuppression: false, autoGainControl: false } 
+                audio: { echoCancellation: false, noiseSuppression: false } 
             });
-            // Questへ自動発信
-            peer.call('psy-link-stable-quest', stream);
-            document.getElementById('status').innerText = "送信中！Questのボタンを押して開始してください";
+
+            // 音響解析の設定
+            const audioCtx = new AudioContext();
+            const source = audioCtx.createMediaStreamSource(stream);
+            const analyzer = audioCtx.createAnalyser();
+            analyzer.fftSize = 256;
+            source.connect(analyzer);
+            const dataArray = new Uint8Array(analyzer.frequencyBinCount);
+
+            // Questへ発信（音声ストリーム）
+            const call = peer.call('psy-link-stable-quest', stream);
+            
+            // データ送信用のコネクション（ここで解析数値を送る）
+            dataConnection = peer.connect('psy-link-stable-quest');
+
+            function sendAnalysis() {
+                analyzer.getByteFrequencyData(dataArray);
+                const low = dataArray[4] / 255;
+                const mid = dataArray[12] / 255;
+                const high = dataArray[30] / 255;
+
+                if (dataConnection && dataConnection.open) {
+                    dataConnection.send({
+                        low: low,
+                        mid: mid,
+                        high: high,
+                        modeTrigger: low > 0.85,
+                        time: Date.now()
+                    });
+                }
+                requestAnimationFrame(sendAnalysis);
+            }
+            sendAnalysis();
+            document.getElementById('status').innerText = "解析データを送信中...";
         };
     </script>
 </body>
