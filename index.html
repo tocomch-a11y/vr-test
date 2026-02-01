@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
     <meta charset="UTF-8">
-    <title>Psy-XR Final Sync</title>
+    <title>Psy-XR Ultra Fix</title>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
     <script src="https://unpkg.com/peerjs@1.3.1/dist/peerjs.min.js"></script>
     <style>
@@ -10,7 +10,7 @@
         #ui { position: fixed; top: 0; left: 0; width: 100%; height: 100%; display: flex; flex-direction: column; justify-content: center; align-items: center; background: rgba(0,0,0,0.9); z-index: 1000; }
         #arBtn { padding: 40px 80px; font-size: 30px; background: #333; color: #fff; border: none; border-radius: 15px; cursor: not-allowed; transition: 0.3s; }
         #arBtn.ready { background: #00ffff; color: #000; cursor: pointer; box-shadow: 0 0 30px #00ffff; }
-        #status { color: #0f0; margin-top: 20px; font-size: 18px; text-align: center; }
+        #status { color: #0f0; margin-top: 20px; font-size: 18px; text-align: center; white-space: pre-wrap; }
     </style>
 </head>
 <body>
@@ -26,12 +26,13 @@
         let macData = { low: 0, mid: 0, high: 0, trigger: false };
         let renderer, scene, camera, mesh, geometries = [];
         let currentIdx = 0, lastSwitch = 0, hue = 0;
+        let xrRefSpace = null;
 
-        // 1. Peer Setup (Must happen first)
+        // 1. Peer Setup
         const peer = new Peer('quest-receiver');
-        peer.on('open', (id) => { status.innerText = "READY.\nCONNECT FROM MAC NOW."; });
+        peer.on('open', (id) => { status.innerText = "1. START MAC SENDER\nTarget ID: quest-receiver"; });
         peer.on('connection', conn => {
-            status.innerText = "MAC CONNECTED!\nCLICK 'START AR' NOW.";
+            status.innerText = "MAC CONNECTED!\n2. CLICK 'START AR'";
             btn.disabled = false; btn.classList.add('ready'); btn.innerText = "START AR";
             conn.on('data', data => { macData = data; });
         });
@@ -45,42 +46,40 @@
             if (navigator.xr) {
                 navigator.xr.requestSession('immersive-ar', { 
                     requiredFeatures: ['local-floor', 'hand-tracking'] 
-                }).then(setupXR);
+                }).then(onSessionStarted);
             }
         };
 
-        function setupXR(session) {
+        async function onSessionStarted(session) {
             document.getElementById('ui').style.display = 'none';
             
-            renderer = new THREE.WebGLRenderer({ antialias: false, alpha: true, powerPreference: "high-performance" });
+            renderer = new THREE.WebGLRenderer({ antialias: false, alpha: true });
             renderer.xr.enabled = true;
-            renderer.setPixelRatio(1);
             renderer.setSize(window.innerWidth, window.innerHeight);
-            
-            // Critical: Set session before starting the loop
-            renderer.xr.setSession(session);
+            await renderer.xr.setSession(session);
+
+            // Get Reference Space (Important for Quest!)
+            xrRefSpace = await session.requestReferenceSpace('local-floor');
 
             scene = new THREE.Scene();
-            camera = new THREE.PerspectiveCamera(70, window.innerWidth/window.innerHeight, 0.01, 50);
+            camera = new THREE.PerspectiveCamera(70, window.innerWidth / window.innerHeight, 0.1, 20);
 
             createGeos();
             const mat = new THREE.MeshBasicMaterial({ wireframe: true, transparent: true, opacity: 0.8 });
             mesh = new THREE.Mesh(geometries[0], mat);
             
-            // Initial position in front of user
-            mesh.position.set(0, 1.2, -0.5); 
+            // Set initial position in front of user
+            mesh.position.set(0, 1.2, -0.6); 
             scene.add(mesh);
 
-            // Start the loop INSIDE the session
             renderer.setAnimationLoop(render);
         }
 
         function createGeos() {
             geometries = [
-                new THREE.TorusKnotGeometry(0.5, 0.15, 100, 16),
+                new THREE.TorusKnotGeometry(0.4, 0.15, 100, 16),
                 new THREE.IcosahedronGeometry(0.5, 1),
-                new THREE.TorusGeometry(0.6, 0.05, 16, 100),
-                new THREE.OctahedronGeometry(0.5, 2),
+                new THREE.TorusGeometry(0.5, 0.05, 16, 100),
                 new THREE.TorusKnotGeometry(0.5, 0.05, 150, 20, 2, 3),
                 new THREE.BoxGeometry(0.6, 0.6, 0.6, 5, 5, 5),
                 new THREE.DodecahedronGeometry(0.5, 0),
@@ -88,41 +87,43 @@
                 new THREE.TorusKnotGeometry(0.4, 0.2, 64, 8, 3, 4),
                 new THREE.ConeGeometry(0.5, 1, 32, 10, true),
                 new THREE.TorusGeometry(0.5, 0.2, 12, 48),
-                new THREE.CapsuleGeometry(0.3, 0.6, 4, 12)
+                new THREE.CapsuleGeometry(0.3, 0.6, 4, 12),
+                new THREE.OctahedronGeometry(0.5, 2)
             ];
         }
 
         function render(time, frame) {
+            if (!frame) return;
             hue += 0.003 + (macData.high * 0.02);
 
             // Mode Switch
             if (macData.trigger && (Date.now() - lastSwitch > 600)) {
-                currentIdx = Math.floor(Math.random() * 12);
+                currentIdx = (currentIdx + 1) % geometries.length;
                 mesh.geometry = geometries[currentIdx];
                 lastSwitch = Date.now();
             }
 
-            // Hand Tracking
-            if (frame) {
-                const referenceSpace = renderer.xr.getReferenceSpace();
-                const session = frame.session;
-                for (const inputSource of session.inputSources) {
-                    if (inputSource.hand) {
-                        const tip = frame.getJointPose(inputSource.hand.get('index-finger-tip'), referenceSpace);
-                        if (tip) {
-                            const p = tip.transform.position;
+            // Hand Tracking Logic
+            const session = frame.session;
+            for (const inputSource of session.inputSources) {
+                if (inputSource.hand) {
+                    const joint = inputSource.hand.get('index-finger-tip');
+                    if (joint) {
+                        const pose = frame.getJointPose(joint, xrRefSpace);
+                        if (pose) {
+                            const p = pose.transform.position;
                             mesh.position.lerp(new THREE.Vector3(p.x, p.y, p.z), 0.2);
                             
-                            const q = tip.transform.orientation;
+                            const q = pose.transform.orientation;
                             mesh.quaternion.slerp(new THREE.Quaternion(q.x, q.y, q.z, q.w), 0.1);
                         }
                     }
                 }
             }
 
-            // Visual Updates
+            // Fallback: If no hands, keep floating in front
             mesh.rotation.y += 0.01;
-            mesh.scale.setScalar(1 + (macData.low * 2));
+            mesh.scale.setScalar(1 + (macData.low * 2.5));
             mesh.material.color.setHSL((hue + macData.mid) % 1, 0.8, 0.5);
             mesh.material.opacity = 0.4 + (macData.low * 0.6);
 
