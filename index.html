@@ -2,37 +2,33 @@
 <html lang="ja">
 <head>
     <meta charset="UTF-8">
-    <title>Psychedelic XR - Physical Control</title>
+    <title>Bio-Psychedelic XR (Hand Tracking)</title>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
     <script src="https://unpkg.com/peerjs@1.3.1/dist/peerjs.min.js"></script>
     <style>
-        body { margin: 0; background: #000; overflow: hidden; }
-        #overlay { position: absolute; width: 100%; height: 100%; display: flex; flex-direction: column; justify-content: center; align-items: center; color: white; background: rgba(0,0,0,0.9); z-index: 100; font-family: sans-serif; }
-        button { padding: 30px 60px; font-size: 24px; background: #00ffff; border: none; border-radius: 50px; cursor: pointer; font-weight: bold; }
+        body { margin: 0; background: #000; overflow: hidden; font-family: sans-serif; }
+        #overlay { position: absolute; width: 100%; height: 100%; display: flex; flex-direction: column; justify-content: center; align-items: center; color: white; background: rgba(0,0,0,0.9); z-index: 100; }
+        button { padding: 30px 60px; font-size: 24px; background: linear-gradient(45deg, #00ffff, #ff00ff); border: none; border-radius: 50px; cursor: pointer; font-weight: bold; color: white; box-shadow: 0 0 20px rgba(0,255,255,0.5); }
     </style>
 </head>
 <body>
     <div id="overlay">
-        <div id="status">Wait for Mac Signal...</div>
-        <button id="startBtn" style="display:none;">START PHYSICAL-AR</button>
+        <div id="status">Wait for Mac Signal (psy-link-stable-mac)</div>
+        <button id="startBtn" style="display:none;">HAND-TRACKING START</button>
     </div>
     <audio id="remoteAudio" autoplay></audio>
 
     <script type="module">
-        import { VRButton } from 'https://unpkg.com/three@0.128.0/examples/jsm/webxr/VRButton.js';
-
         let scene, camera, renderer, analyzer, dataL, audioCtx;
-        let currentMode = 'Y', autoMode = false, lsdMode = false;
-        let lastAutoSwitch = 0, hueBase = 0;
-        let shapeParam = 0; // ジョイスティックで変わる形状変数
-        const groups = { A: new THREE.Group(), B: new THREE.Group(), X: new THREE.Group(), Y: new THREE.Group() };
-
+        let currentMode = 0, lastSwitch = 0, hueBase = 0;
+        const groups = Array.from({ length: 12 }, () => new THREE.Group());
+        
         const peer = new Peer('psy-link-stable-quest');
         peer.on('call', call => {
             call.answer(new MediaStream());
             call.on('stream', stream => {
                 document.getElementById('remoteAudio').srcObject = stream;
-                document.getElementById('status').innerText = "Connected";
+                document.getElementById('status').innerText = "Connected!";
                 document.getElementById('startBtn').style.display = "block";
                 window.remoteStream = stream;
             });
@@ -44,86 +40,78 @@
             audioCtx = new (window.AudioContext || window.webkitAudioContext)();
             const source = audioCtx.createMediaStreamSource(window.remoteStream);
             analyzer = audioCtx.createAnalyser();
-            analyzer.fftSize = 128;
+            analyzer.fftSize = 256;
             source.connect(analyzer);
             dataL = new Uint8Array(analyzer.frequencyBinCount);
             source.connect(audioCtx.destination);
             document.getElementById('overlay').style.display = 'none';
 
             scene = new THREE.Scene();
-            camera = new THREE.PerspectiveCamera(70, window.innerWidth/window.innerHeight, 0.1, 1000);
+            camera = new THREE.PerspectiveCamera(75, window.innerWidth/window.innerHeight, 0.1, 1000);
             renderer = new THREE.WebGLRenderer({ antialias: false, alpha: true });
             renderer.setSize(window.innerWidth, window.innerHeight);
             renderer.xr.enabled = true;
             document.body.appendChild(renderer.domElement);
 
-            setupAll();
-            navigator.xr.requestSession('immersive-ar', { requiredFeatures: ['local-floor'] }).then(s => renderer.xr.setSession(s));
+            setup12Modes();
+            groups.forEach(g => { g.visible = false; scene.add(g); });
+            groups[0].visible = true;
+
+            navigator.xr.requestSession('immersive-ar', { 
+                requiredFeatures: ['local-floor', 'hand-tracking'] 
+            }).then(s => renderer.xr.setSession(s));
+
             renderer.setAnimationLoop(render);
         }
 
-        function setupAll() {
-            // Y: スペクトラム・リング
-            for(let j=0; j<30; j++) {
-                const geo = new THREE.BufferGeometry().setAttribute('position', new THREE.BufferAttribute(new Float32Array(64*3), 3));
-                groups.Y.add(new THREE.LineLoop(geo, new THREE.LineBasicMaterial({transparent: true})));
-            }
-            // B: レインボー・リング（復刻）
-            for(let i=0; i<20; i++) {
-                const ring = new THREE.Mesh(new THREE.TorusGeometry(3+i, 0.1, 8, 32), new THREE.MeshBasicMaterial({wireframe: true}));
-                groups.B.add(ring);
-            }
-            // X: カスキューブ（復刻）
-            for(let i=0; i<60; i++) {
-                const c = new THREE.Mesh(new THREE.BoxGeometry(1,1,1), new THREE.MeshBasicMaterial({wireframe: true}));
-                c.position.set((Math.random()-0.5)*50, (Math.random()-0.5)*50, -Math.random()*50);
-                groups.X.add(c);
-            }
-            // A: 新・サイケデリック・グリフ（ジョイスティックで角数が変わる）
-            const glyph = new THREE.Mesh(new THREE.IcosahedronGeometry(10, 1), new THREE.MeshBasicMaterial({wireframe: true}));
-            groups.A.add(glyph);
+        function setup12Modes() {
+            // モードごとの基本オブジェクトを生成（負荷分散のためシンプルに）
+            const geos = [
+                new THREE.TorusGeometry(10, 0.5, 16, 100), // 0: Ring
+                new THREE.IcosahedronGeometry(10, 1),       // 1: Crystal
+                new THREE.TorusKnotGeometry(8, 2, 100, 16), // 2: Knot
+                new THREE.BoxGeometry(15, 15, 15),          // 3: Cube
+                new THREE.OctahedronGeometry(10, 0),        // 4: Octa
+                new THREE.SphereGeometry(10, 32, 32),       // 5: Sphere
+                new THREE.CylinderGeometry(5, 5, 20, 32),   // 6: Tube
+                new THREE.DodecahedronGeometry(10, 0),      // 7: Dodeca
+                new THREE.PlaneGeometry(30, 30, 10, 10),    // 8: Mesh
+                new THREE.TorusGeometry(10, 3, 8, 6),       // 9: Hex-Ring
+                new THREE.ConeGeometry(8, 15, 32),          // 10: Cone
+                new THREE.TorusKnotGeometry(8, 0.5, 150, 4) // 11: Spiral
+            ];
 
-            Object.values(groups).forEach(g => { g.visible = false; scene.add(g); });
-            groups.Y.visible = true;
+            geos.forEach((geo, i) => {
+                const mat = new THREE.MeshBasicMaterial({ wireframe: true, transparent: true });
+                const mesh = new THREE.Mesh(geo, mat);
+                groups[i].add(mesh);
+                // サブオブジェクトとしてパーティクルなどを追加可能
+            });
         }
 
         function render() {
             const session = renderer.xr.getSession();
-            let controllerPos = new THREE.Vector3();
-            let ctrlDist = 1;
+            let handDist = 1.0, handSpread = 0.5, handRot = 0;
 
             if (session) {
-                const inputSources = session.inputSources;
-                for (let i = 0; i < inputSources.length; i++) {
-                    const source = inputSources[i];
-                    const gamepad = source.gamepad;
-                    const pose = renderer.xr.getController(i).position;
+                // ハンドトラッキングデータの取得
+                for (const inputSource of session.inputSources) {
+                    if (inputSource.hand) {
+                        const indexTip = inputSource.hand.get('index-finger-tip');
+                        const thumbTip = inputSource.hand.get('thumb-tip');
+                        const wrist = inputSource.hand.get('wrist');
 
-                    // コントローラー間の距離でサイズ・スピードを調整
-                    if(inputSources.length >= 2) {
-                        const p1 = renderer.xr.getController(0).position;
-                        const p2 = renderer.xr.getController(1).position;
-                        ctrlDist = p1.distanceTo(p2) * 2; // 離すほど大きく
-                    }
-
-                    if (gamepad) {
-                        // ジョイスティック操作 (axes[2], [3] が右, [0], [1] が左)
-                        const joyX = gamepad.axes[2] || gamepad.axes[0];
-                        const joyY = gamepad.axes[3] || gamepad.axes[1];
-                        if (Math.abs(joyX) > 0.1 || Math.abs(joyY) > 0.1) {
-                            shapeParam = (joyX + joyY) * 10; // 形の変化係数
+                        if (indexTip && thumbTip) {
+                            // 指の開き具合 (Index to Thumb)
+                            const frame = renderer.xr.getFrame();
+                            const p1 = frame.getJointPose(indexTip, renderer.xr.getReferenceSpace()).transform.position;
+                            const p2 = frame.getJointPose(thumbTip, renderer.xr.getReferenceSpace()).transform.position;
+                            handSpread = Math.sqrt((p1.x-p2.x)**2 + (p1.y-p2.y)**2 + (p1.z-p2.z)**2) * 10;
                         }
-
-                        const b = gamepad.buttons;
-                        if (source.handedness === 'right' && b[0]?.pressed && Date.now() - lastAutoSwitch > 500) {
-                            autoMode = !autoMode; lastAutoSwitch = Date.now();
-                        }
-                        lsdMode = (source.handedness === 'left' && b[0]?.pressed);
-
-                        if (source.handedness === 'right') {
-                            if (b[4]?.pressed) switchM('A'); if (b[5]?.pressed) switchM('B');
-                        } else {
-                            if (b[4]?.pressed) switchM('X'); if (b[5]?.pressed) switchM('Y');
+                        if (wrist) {
+                            // 手首の回転
+                            const wPose = renderer.xr.getFrame().getJointPose(wrist, renderer.xr.getReferenceSpace());
+                            handRot = wPose.transform.orientation.y;
                         }
                     }
                 }
@@ -131,64 +119,43 @@
 
             if (analyzer) {
                 analyzer.getByteFrequencyData(dataL);
-                const low = dataL[5]/255, mid = dataL[15]/255;
-                hueBase += 0.003;
+                const low = dataL[4]/255, mid = dataL[15]/255, high = dataL[40]/255;
+                hueBase += 0.002 + (high * 0.05);
 
-                if (autoMode && low > 0.8 && Date.now() - lastAutoSwitch > 1000) {
-                    switchM(['A','B','X','Y'][Math.floor(Math.random()*4)]);
-                    lastAutoSwitch = Date.now();
+                // モードのランダム切替 (低音に同期)
+                if (low > 0.85 && Date.now() - lastSwitch > 800) {
+                    groups[currentMode].visible = false;
+                    currentMode = Math.floor(Math.random() * 12);
+                    groups[currentMode].visible = true;
+                    lastSwitch = Date.now();
                 }
 
-                if (currentMode === 'Y') {
-                    groups.Y.children.forEach((l, j) => {
-                        const pos = l.geometry.attributes.position.array;
-                        for(let i=0; i<64; i++) {
-                            const a = (i/64)*Math.PI*2;
-                            // ジョイスティック(shapeParam)でギザギザの周期が変わる
-                            const r = (j*0.5*ctrlDist) + (dataL[i%32]/255)*(5 + shapeParam);
-                            pos[i*3] = Math.cos(a)*r; pos[i*3+1] = Math.sin(a)*r; pos[i*3+2] = -j*2;
-                        }
-                        l.geometry.attributes.position.needsUpdate = true;
-                        l.material.color.setHSL((hueBase + j*0.02)%1, 1, 0.5);
-                    });
-                } else if (currentMode === 'B') {
-                    groups.B.children.forEach((m, i) => {
-                        const s = ctrlDist * (1 + low * 2);
-                        m.scale.set(s, s, 1);
-                        m.rotation.z += 0.01 * ctrlDist + (shapeParam * 0.01);
-                        m.material.color.setHSL((hueBase + i*0.05)%1, 1, 0.5);
-                        m.position.z = -i * (3 + shapeParam*0.1);
-                    });
-                } else if (currentMode === 'X') {
-                    groups.X.children.forEach((m, i) => {
-                        m.position.z += (0.2 + low) * ctrlDist;
-                        if(m.position.z > 5) m.position.z = -60;
-                        m.scale.setScalar(ctrlDist);
-                        m.rotation.y += shapeParam * 0.01;
-                        m.material.color.setHSL((hueBase + i*0.02)%1, 1, 0.5);
-                    });
-                } else if (currentMode === 'A') {
-                    const m = groups.A.children[0];
-                    m.rotation.y += 0.01 * ctrlDist;
-                    m.scale.setScalar(ctrlDist * (5 + low*10));
-                    // 形状のトゲトゲ具合をジョイスティックで制御
-                    m.rotation.x = shapeParam * 0.1;
-                    m.material.color.setHSL(hueBase%1, 1, 0.5);
-                }
+                // 視線方向
+                const lookVec = new THREE.Vector3(0,0,-1).applyQuaternion(camera.quaternion);
 
-                if (lsdMode) {
-                    scene.scale.setScalar(1 + low * 0.2);
-                    scene.rotation.z = Math.sin(Date.now()*0.001) * 0.2;
-                } else {
-                    scene.scale.setScalar(1); scene.rotation.z = 0;
-                }
+                // カレントモードの演出
+                const g = groups[currentMode];
+                const m = g.children[0];
+
+                // 1. ハンドトラッキング連動: 指の開きでトゲトゲ化(wireframe密度)やスケール
+                m.scale.setScalar(1 + low * 2 + handSpread);
+                
+                // 2. 手首の回転で色と回転速度
+                m.rotation.y += 0.01 + handRot * 0.1;
+                m.rotation.x += mid * 0.05;
+
+                // 3. 視線連動: 向いている方向にオブジェクトが少しオフセットされる
+                g.position.lerp(lookVec.multiplyScalar(20 + mid * 10), 0.1);
+                
+                // 4. マテリアル更新 (負荷軽減のため色のみ)
+                m.material.color.setHSL((hueBase + handRot)%1, 1, 0.5);
+                m.material.opacity = 0.3 + low * 0.7;
+
+                // 空間全体へのLSD効果（常に薄くかける）
+                scene.rotation.z = Math.sin(Date.now()*0.0005) * handRot;
             }
-            renderer.render(scene, camera);
-        }
 
-        function switchM(m) {
-            currentMode = m;
-            Object.keys(groups).forEach(k => groups[k].visible = (k === m));
+            renderer.render(scene, camera);
         }
     </script>
 </body>
