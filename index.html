@@ -1,121 +1,69 @@
-<!DOCTYPE html>
-<html lang="ja">
-<head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>FORCE AR START</title>
-    <style>
-        body { margin: 0; background: #000; overflow: hidden; }
-        #arBtn { 
-            position: fixed; top: 50%; left: 50%; transform: translate(-50%, -50%);
-            padding: 60px 100px; font-size: 40px; background: #ff00ff; color: white;
-            border: 10px solid #fff; border-radius: 20px; font-weight: bold; z-index: 9999;
-        }
-        #status { position: fixed; bottom: 20px; width: 100%; text-align: center; color: #0f0; font-family: monospace; z-index: 1000; }
-    </style>
-</head>
-<body>
-    <button id="arBtn">ENTER AR</button>
-    <div id="status">Ready to Launch</div>
-    <audio id="remoteAudio" autoplay></audio>
-
-    <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
-    <script src="https://unpkg.com/peerjs@1.3.1/dist/peerjs.min.js"></script>
-
-    <script>
-        const btn = document.getElementById('arBtn');
-        const status = document.getElementById('status');
-        let macData = { low: 0, mid: 0, high: 0, trigger: false };
-        let renderer, scene, camera, mesh, geometries = [];
-
-        // 1. 最優先：ボタンが押された瞬間にXRを要求（一切の計算を挟まない）
-        btn.onclick = () => {
-            if (!navigator.xr) {
-                status.innerText = "WebXR NOT SUPPORTED";
-                return;
-            }
-
-            navigator.xr.requestSession('immersive-ar', {
-                requiredFeatures: ['local-floor', 'hand-tracking']
-            }).then(setupXR).catch(err => {
-                status.innerText = "XR FAIL: " + err.message;
-                console.error(err);
-            });
-        };
-
-        function setupXR(session) {
-            btn.style.display = 'none';
-            status.innerText = "XR SESSION ACTIVE";
-
-            // 描画系の初期化
-            renderer = new THREE.WebGLRenderer({ antialias: false, alpha: true });
-            renderer.xr.enabled = true;
-            renderer.setPixelRatio(1);
-            renderer.setSize(window.innerWidth, window.innerHeight);
-            renderer.xr.setSession(session);
-
-            scene = new THREE.Scene();
-            camera = new THREE.PerspectiveCamera(70, window.innerWidth/window.innerHeight, 0.1, 100);
-
-            // 12種類の形状を生成
-            createGeos();
-            mesh = new THREE.Mesh(geometries[0], new THREE.MeshBasicMaterial({wireframe: true, color: 0x00ffff}));
-            scene.add(mesh);
-
-            // 通信の開始（AR起動後にバックグラウンドで開始）
-            initCommunication();
-
-            renderer.setAnimationLoop(render);
-        }
-
+// --- 12種類の複雑な幾何学を生成 ---
         function createGeos() {
-            for(let i=0; i<12; i++) {
-                geometries.push(new THREE.IcosahedronGeometry(i + 1, 1)); // シンプルなテスト形状
-            }
-            // 実際にはここでTorusKnotなどの複雑な形状をループで入れる
+            geometries = [
+                new THREE.TorusKnotGeometry(1, 0.4, 128, 16), // 0: 混沌の結び目
+                new THREE.IcosahedronGeometry(1.5, 1),        // 1: 水晶体
+                new THREE.TorusGeometry(2, 0.05, 16, 100),    // 2: 無限の輪
+                new THREE.OctahedronGeometry(1.5, 0),         // 3: ピラミッド
+                new THREE.TorusKnotGeometry(1.5, 0.1, 200, 3, 3, 5), // 4: スパイラル
+                new THREE.BoxGeometry(2, 2, 2, 4, 4, 4),      // 5: サイバーキューブ
+                new THREE.DodecahedronGeometry(1.5, 0),       // 6: 12面体
+                new THREE.TorusGeometry(1.5, 0.8, 12, 6),     // 7: 六角リング
+                new THREE.SphereGeometry(1.5, 32, 32),        // 8: 生命の種
+                new THREE.ConeGeometry(1.5, 3, 32, 1, true),  // 9: 円錐
+                new THREE.TorusKnotGeometry(1.2, 0.6, 64, 4), // 10: 肥大する結び目
+                new THREE.CapsuleGeometry(1, 2, 4, 16)        // 11: カプセル
+            ];
         }
 
-        function initCommunication() {
-            const peer = new Peer('psy-link-stable-quest');
-            peer.on('call', call => {
-                call.answer(new MediaStream());
-                call.on('stream', stream => {
-                    document.getElementById('remoteAudio').srcObject = stream;
-                });
-            });
-            peer.on('connection', conn => {
-                conn.on('data', data => { macData = data; });
-            });
-        }
-
-        let lastSwitch = 0, hue = 0, currentIdx = 0;
+        // --- Render内の演出ロジック強化 ---
         function render(time, frame) {
             hue += 0.005;
-            if (macData.trigger && Date.now() - lastSwitch > 800) {
-                currentIdx = (currentIdx + 1) % 12;
+
+            // 1. Macからの低音トリガーでモードをランダムザッピング
+            if (macData.trigger && Date.now() - lastSwitch > 600) {
+                currentIdx = Math.floor(Math.random() * 12);
                 mesh.geometry = geometries[currentIdx];
                 lastSwitch = Date.now();
             }
 
-            // ハンドトラッキング
+            // 2. ハンドトラッキング：手の位置に「吸い付く」ような滑らかな移動
             if (frame) {
                 const sources = frame.session.inputSources;
                 for (const input of sources) {
                     if (input.hand) {
-                        const joint = frame.getJointPose(input.hand.get('index-finger-tip'), renderer.xr.getReferenceSpace());
-                        if (joint) {
-                            mesh.position.set(joint.transform.position.x, joint.transform.position.y, joint.transform.position.z);
+                        const tip = frame.getJointPose(input.hand.get('index-finger-tip'), renderer.xr.getReferenceSpace());
+                        const wrist = frame.getJointPose(input.hand.get('wrist'), renderer.xr.getReferenceSpace());
+                        
+                        if (tip && wrist) {
+                            const tPos = tip.transform.position;
+                            const wPos = wrist.transform.position;
+                            
+                            // 滑らかに追従（Lerp）
+                            const targetPos = new THREE.Vector3(tPos.x, tPos.y, tPos.z);
+                            mesh.position.lerp(targetPos, 0.2);
+
+                            // 指の開き具合を「トゲトゲ度」や「サイズ」に反映
+                            const spread = Math.hypot(tPos.x - wPos.x, tPos.y - wPos.y, tPos.z - wPos.z);
+                            const dynamicScale = 0.5 + (spread * 5) + (macData.low * 2);
+                            mesh.scale.setScalar(dynamicScale);
                         }
                     }
                 }
             }
 
-            mesh.rotation.y += 0.02 + macData.high * 0.1;
-            mesh.scale.setScalar(1 + macData.low * 3);
-            mesh.material.color.setHSL((hue + macData.mid)%1, 1, 0.5);
+            // 3. 視線連動：見ている方向にオブジェクトが少し傾く
+            const lookVec = new THREE.Vector3(0, 0, -1).applyQuaternion(camera.quaternion);
+            mesh.rotation.x += 0.01 + macData.mid * 0.1;
+            mesh.rotation.y += 0.02 + macData.high * 0.2;
+            
+            // 4. サイケデリック・カラー
+            // 低音で発光、高音で色相が高速回転
+            const targetColor = new THREE.Color();
+            targetColor.setHSL((hue + macData.mid + (currentIdx * 0.08)) % 1, 0.8, 0.5 + macData.low * 0.3);
+            mesh.material.color.lerp(targetColor, 0.1);
+            mesh.material.opacity = 0.4 + macData.low * 0.6;
 
             renderer.render(scene, camera);
         }
-    </script>
-</body>
-</html>
+        
