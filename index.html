@@ -2,110 +2,99 @@
 <html lang="ja">
 <head>
     <meta charset="UTF-8">
-    <title>Psychedelic VR Tunnel - WebRTC Stable Link</title>
+    <title>Psychedelic VR Tunnel</title>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
     <script src="https://unpkg.com/peerjs@1.3.1/dist/peerjs.min.js"></script>
     <style>
         body { margin: 0; background-color: #000; overflow: hidden; font-family: sans-serif; }
         #overlay { position: absolute; top: 0; left: 0; width: 100%; height: 100%; display: flex; flex-direction: column; justify-content: center; align-items: center; color: white; background: #000; z-index: 100; }
-        #status { margin-top: 20px; color: #00ffff; font-family: monospace; text-align: center; padding: 0 20px; }
-        button { padding: 20px 40px; font-size: 20px; background: linear-gradient(45deg, #00ffff, #ff00ff); color: white; border: none; border-radius: 50px; cursor: pointer; }
+        #status { margin-top: 20px; color: #00ffff; font-family: monospace; text-align: center; }
+        input { padding: 10px; font-size: 16px; border-radius: 5px; border: none; margin-bottom: 10px; width: 250px; text-align: center; }
+        button { padding: 20px 40px; font-size: 18px; background: linear-gradient(45deg, #00ffff, #ff00ff); color: white; border: none; border-radius: 50px; cursor: pointer; font-weight: bold; }
     </style>
 </head>
 <body>
     <div id="overlay">
-        <h1>Psychedelic VR Tunnel</h1>
-        <div id="btn-container">
-            <button id="startBtn">Mac音源に接続して起動</button>
-        </div>
-        <div id="status">Macの sender.html から発行されたURLを開いてください</div>
+        <h1>Psychedelic VR</h1>
+        <input type="text" id="targetIdInput" placeholder="送信機IDを入力 (例: vr-audio-mac-1234)">
+        <button id="startBtn">Mac音源に接続して起動</button>
+        <div id="status">MacのIDを入力してボタンを押してください</div>
     </div>
 
     <script type="module">
         import { VRButton } from 'https://unpkg.com/three@0.128.0/examples/jsm/webxr/VRButton.js';
 
-        let scene, camera, renderer, analyzer, dataArray;
+        let scene, camera, renderer, analyzer, dataArray, audioCtx;
         let tunnel, particles;
         const statusEl = document.getElementById('status');
-        
-        // PeerJSの設定（IDは自動割り当て）
-        const peer = new Peer(); 
+        const peer = new Peer(); // 自分のIDは自動生成
 
         function initScene() {
             scene = new THREE.Scene();
             camera = new THREE.PerspectiveCamera(90, window.innerWidth / window.innerHeight, 0.1, 1000);
-            
             renderer = new THREE.WebGLRenderer({ antialias: true });
             renderer.setSize(window.innerWidth, window.innerHeight);
             renderer.xr.enabled = true;
             document.body.appendChild(renderer.domElement);
             document.body.appendChild(VRButton.createButton(renderer));
 
+            // トンネル
             const tunnelGeom = new THREE.CylinderGeometry(30, 30, 500, 64, 100, true);
-            const tunnelMat = new THREE.MeshBasicMaterial({
-                color: 0xff00ff, wireframe: true, side: THREE.DoubleSide, transparent: true, opacity: 0.3
-            });
+            const tunnelMat = new THREE.MeshBasicMaterial({ color: 0xff00ff, wireframe: true, side: THREE.DoubleSide, transparent: true, opacity: 0.3 });
             tunnel = new THREE.Mesh(tunnelGeom, tunnelMat);
             tunnel.rotation.x = Math.PI / 2;
             scene.add(tunnel);
 
+            // パーティクル
             const pGeom = new THREE.BufferGeometry();
-            const pCount = 15000;
+            const pCount = 10000;
             const pPos = new Float32Array(pCount * 3);
             for(let i=0; i<pCount*3; i++) { pPos[i] = (Math.random() - 0.5) * 400; }
             pGeom.setAttribute('position', new THREE.BufferAttribute(pPos, 3));
-            const pMat = new THREE.PointsMaterial({ size: 0.2, color: 0x00ffff, transparent: true });
-            particles = new THREE.Points(pGeom, pMat);
+            particles = new THREE.Points(pGeom, new THREE.PointsMaterial({ size: 0.2, color: 0x00ffff, transparent: true }));
             scene.add(particles);
 
             animate();
         }
 
         async function setupAudioLink() {
-            // URLパラメータから送信機IDを取得
-            const urlParams = new URLSearchParams(window.location.search);
-            const targetId = urlParams.get('id');
-
+            const targetId = document.getElementById('targetIdInput').value;
             if (!targetId) {
-                statusEl.innerText = "エラー: 送信機IDが見つかりません。Macの sender.html に表示されたリンクから開いてください。";
+                alert("送信機IDを入力してください");
                 return;
             }
 
-            statusEl.innerText = `送信機(${targetId})に接続中...`;
+            // Questのオーディオ制限を解除
+            audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+            await audioCtx.resume();
+
+            statusEl.innerText = "接続中...";
             
-            // Macの送信機に空のストリームを投げて接続開始
+            // Macに発信
             const call = peer.call(targetId, new MediaStream());
 
             call.on('stream', (remoteStream) => {
-                statusEl.innerText = "受信成功！解析を開始します...";
+                statusEl.innerText = "受信成功！";
                 
+                // Questで音を鳴らすための設定
                 const audio = new Audio();
                 audio.srcObject = remoteStream;
-                audio.muted = false; // 音を出して確認
+                audio.play(); 
+
+                const source = audioCtx.createMediaStreamSource(remoteStream);
+                analyzer = audioCtx.createAnalyser();
+                analyzer.fftSize = 512;
+                source.connect(analyzer);
+                source.connect(audioCtx.destination); // Questのスピーカーへ
                 
-                audio.onloadedmetadata = () => {
-                    audio.play();
-                    const AudioContext = window.AudioContext || window.webkitAudioContext;
-                    const audioCtx = new AudioContext();
-                    const source = audioCtx.createMediaStreamSource(remoteStream);
-                    
-                    analyzer = audioCtx.createAnalyser();
-                    analyzer.fftSize = 512;
-                    analyzer.smoothingTimeConstant = 0.8;
-                    source.connect(analyzer);
-                    
-                    // スピーカー出力
-                    source.connect(audioCtx.destination);
-                    
-                    dataArray = new Uint8Array(analyzer.frequencyBinCount);
-                    statusEl.innerText = "音源連動中！ENTER VR を押してください";
-                    document.getElementById('startBtn').style.display = 'none';
-                };
+                dataArray = new Uint8Array(analyzer.frequencyBinCount);
+                statusEl.innerText = "連動開始！ENTER VRを押してください";
+                document.getElementById('startBtn').style.display = 'none';
+                document.getElementById('targetIdInput').style.display = 'none';
             });
 
             peer.on('error', (err) => {
-                statusEl.innerText = "接続エラー: IDが古いか、送信機が閉じています。";
-                console.error(err);
+                statusEl.innerText = "エラー: IDが正しくないか送信機がオフです";
             });
         }
 
@@ -113,17 +102,12 @@
             renderer.setAnimationLoop(() => {
                 if (analyzer) {
                     analyzer.getByteFrequencyData(dataArray);
-                    
-                    const bass = (dataArray[5] / 255) * 5.0; // 感度5倍
-                    const mid = (dataArray[40] / 255) * 5.0;
-                    
-                    tunnel.rotation.y += 0.005 + bass * 0.1;
+                    const bass = (dataArray[10] / 255) * 6; // 感度高め
+                    tunnel.rotation.y += 0.01 + bass * 0.1;
                     tunnel.scale.set(1 + bass, 1, 1 + bass);
-                    tunnel.material.color.setHSL((Date.now() * 0.0001 + mid) % 1, 1, 0.5);
-
                     const pos = particles.geometry.attributes.position.array;
                     for (let i = 2; i < pos.length; i += 3) {
-                        pos[i] += 0.5 + bass * 8;
+                        pos[i] += 0.5 + bass * 10;
                         if (pos[i] > 200) pos[i] = -200;
                     }
                     particles.geometry.attributes.position.needsUpdate = true;
