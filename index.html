@@ -2,18 +2,18 @@
 <html>
 <head>
     <meta charset="UTF-8">
-    <title>PSY-AR ULTIMATE</title>
+    <title>PSY-AR RESILIENT</title>
     <style>
-        body { margin: 0; background: #000; overflow: hidden; }
+        body { margin: 0; background: #000; overflow: hidden; font-family: sans-serif; }
         #arBtn { 
             position: fixed; top: 50%; left: 50%; transform: translate(-50%,-50%); 
-            padding: 40px 80px; font-size: 30px; background: #fff; color: #000; 
-            border: none; border-radius: 15px; z-index: 9999; font-weight: bold;
+            padding: 50px 70px; font-size: 32px; background: #fff; color: #000; 
+            border: 10px solid #0f0; border-radius: 20px; z-index: 10000; font-weight: bold;
         }
     </style>
 </head>
 <body>
-    <button id="arBtn">START AR</button>
+    <button id="arBtn">FORCE START AR</button>
     <audio id="audio" autoplay playsinline style="display:none"></audio>
 
     <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
@@ -25,7 +25,6 @@
         window.mD = { low: 0, mid: 0, high: 0, trigger: false };
         let lastSwitch = 0, hue = 0;
 
-        // 12パターンの幾何学
         function initGeos() {
             geometries = [
                 new THREE.TorusKnotGeometry(0.3, 0.1, 128, 16, 2, 3),
@@ -44,20 +43,21 @@
         }
 
         async function startAR() {
-            // 1. レンダラーを即時作成
-            renderer = new THREE.WebGLRenderer({ antialias: false, alpha: true });
-            renderer.setPixelRatio(1); // 負荷軽減
-            renderer.setSize(window.innerWidth, window.innerHeight);
-            renderer.xr.enabled = true;
+            // エラー回避のため、まず既存のレンダリングがあればクリア
+            if (renderer) renderer.dispose();
 
             try {
-                // 2. 最も成功率の高い 'viewer' を優先しつつ ARを要求
+                // 'hand-tracking'をrequiredからoptionalに変更し、起動の失敗率を激減させる
                 const session = await navigator.xr.requestSession('immersive-ar', {
                     optionalFeatures: ['local-floor', 'hand-tracking']
                 });
 
-                document.body.appendChild(renderer.domElement);
                 document.getElementById('arBtn').style.display = 'none';
+
+                renderer = new THREE.WebGLRenderer({ antialias: false, alpha: true });
+                renderer.xr.enabled = true;
+                renderer.setSize(window.innerWidth, window.innerHeight);
+                document.body.appendChild(renderer.domElement);
 
                 scene = new THREE.Scene();
                 camera = new THREE.PerspectiveCamera(70, window.innerWidth / window.innerHeight, 0.01, 20);
@@ -66,24 +66,24 @@
                 mesh = new THREE.Mesh(geometries[0], new THREE.MeshBasicMaterial({ wireframe: true, color: 0x00ff00 }));
                 scene.add(mesh);
 
-                // 3. 参照空間の取得（失敗しにくいviewerからlocal-floorへ）
-                xrRefSpace = await session.requestReferenceSpace('viewer');
+                // local-floor を試み、ダメなら viewer にフォールバック
                 try {
-                    const floorSpace = await session.requestReferenceSpace('local-floor');
-                    xrRefSpace = floorSpace;
-                } catch(e) { console.log("Local-floor not available, using viewer."); }
+                    xrRefSpace = await session.requestReferenceSpace('local-floor');
+                } catch(e) {
+                    xrRefSpace = await session.requestReferenceSpace('viewer');
+                }
 
                 await renderer.xr.setSession(session);
-                
-                // 4. 通信は最後に開始
                 initPeer();
                 renderer.setAnimationLoop(render);
 
                 session.addEventListener('end', () => { window.location.reload(); });
 
             } catch (e) {
-                alert("Critical Error: " + e.message);
-                window.location.reload();
+                // エラーが出た場合、ブラウザがフリーズしないよう1秒後に強制リロード
+                console.error(e);
+                alert("起動に失敗しました。ページをリロードして3秒待ってから、ゆっくりボタンを押してください。");
+                setTimeout(() => window.location.reload(), 1000);
             }
         }
 
@@ -108,39 +108,43 @@
             hue += 0.005;
             const d = window.mD;
 
-            // 音トリガー形状変化
             if (d.trigger && (Date.now() - lastSwitch > 300)) {
                 mesh.geometry = geometries[Math.floor(Math.random() * geometries.length)];
                 lastSwitch = Date.now();
             }
 
-            // 視線方向の算出
             const gaze = new THREE.Vector3(0, 0, -0.6).applyQuaternion(camera.quaternion).add(camera.position);
 
-            // ハンドトラッキング
+            // 指10本（全部の関節）を取得対象にして、より反応を良くする
             let handPos = new THREE.Vector3();
             let count = 0;
             for (const input of frame.session.inputSources) {
                 if (input.hand) {
-                    const tip = input.hand.get('index-finger-tip');
-                    const pose = tip ? frame.getJointPose(tip, xrRefSpace) : null;
-                    if (pose) {
-                        handPos.set(pose.transform.position.x, pose.transform.position.y, pose.transform.position.z);
-                        count++;
-                    }
+                    // 全指の先端と手首を平均化して「塊」として扱う
+                    const joints = ['thumb-tip', 'index-finger-tip', 'middle-finger-tip', 'ring-finger-tip', 'pinky-tip', 'wrist'];
+                    joints.forEach(name => {
+                        const joint = input.hand.get(name);
+                        const pose = joint ? frame.getJointPose(joint, xrRefSpace) : null;
+                        if (pose) {
+                            handPos.x += pose.transform.position.x;
+                            handPos.y += pose.transform.position.y;
+                            handPos.z += pose.transform.position.z;
+                            count++;
+                        }
+                    });
                 }
             }
 
-            // 反応
             if (count > 0) {
-                mesh.position.lerp(handPos, 0.2); // 手の位置
-                mesh.rotation.y += 0.05 + (d.high * 1.5);
+                const avgPos = new THREE.Vector3(handPos.x / count, handPos.y / count, handPos.z / count);
+                mesh.position.lerp(avgPos, 0.2); 
+                mesh.rotation.y += 0.05 + (d.high * 2.0);
             } else {
-                mesh.position.lerp(gaze, 0.1); // 視線の先
+                mesh.position.lerp(gaze, 0.1); 
                 mesh.rotation.y += 0.02;
             }
 
-            mesh.scale.setScalar(0.4 + (d.low * 3.0));
+            mesh.scale.setScalar(0.4 + (d.low * 4.0));
             mesh.material.color.setHSL((hue + d.mid) % 1, 1, 0.5);
             renderer.render(scene, camera);
         }
