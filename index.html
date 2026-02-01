@@ -2,30 +2,41 @@
 <html lang="ja">
 <head>
     <meta charset="UTF-8">
-    <title>VR Tunnel - Final Sync</title>
+    <title>Quest Receiver VR</title>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
     <script src="https://unpkg.com/peerjs@1.3.1/dist/peerjs.min.js"></script>
     <style>
         body { margin: 0; background: #000; overflow: hidden; font-family: sans-serif; }
         #overlay { position: absolute; top: 0; left: 0; width: 100%; height: 100%; display: flex; flex-direction: column; justify-content: center; align-items: center; color: white; background: #000; z-index: 100; }
-        button { padding: 25px 50px; font-size: 22px; background: #00ffff; border: none; border-radius: 50px; cursor: pointer; font-weight: bold; }
+        .id-display { font-size: 24px; color: #00ffff; margin: 20px; padding: 10px; border: 1px solid #00ffff; }
+        button { padding: 20px 40px; font-size: 20px; background: #ff00ff; border: none; border-radius: 50px; cursor: pointer; color: white; font-weight: bold; }
     </style>
 </head>
 <body>
     <div id="overlay">
-        <h1>VR連動 (デジタル直結)</h1>
-        <button id="startBtn">接続してVR起動</button>
-        <p id="status">Mac側で先に「配信開始」を押してください</p>
+        <h1>Quest受信機</h1>
+        <div id="idStatus">Peer準備中...</div>
+        <div id="idLabel" class="id-display">----</div>
+        <button id="startBtn">1. VR準備 (ここをクリック)</button>
+        <p>このIDをMac側に入力してください</p>
     </div>
 
     <script type="module">
         import { VRButton } from 'https://unpkg.com/three@0.128.0/examples/jsm/webxr/VRButton.js';
 
-        let scene, analyzer, dataArray, audioCtx;
-        let tunnel;
-        const peer = new Peer(); // Quest側のIDは自動
+        let scene, analyzer, dataArray, audioCtx, tunnel;
+        const idLabel = document.getElementById('idLabel');
 
-        // VRシーン準備
+        // Quest専用の固定に近いIDを生成
+        const questId = 'quest-vr-' + Math.floor(Math.random() * 999);
+        const peer = new Peer(questId);
+
+        peer.on('open', (id) => {
+            idLabel.innerText = id;
+            document.getElementById('idStatus').innerText = "準備完了！";
+        });
+
+        // シーン初期化
         scene = new THREE.Scene();
         const camera = new THREE.PerspectiveCamera(90, window.innerWidth/window.innerHeight, 0.1, 1000);
         const renderer = new THREE.WebGLRenderer({ antialias: true });
@@ -35,43 +46,47 @@
         document.body.appendChild(VRButton.createButton(renderer));
 
         const tunnelGeom = new THREE.CylinderGeometry(30, 30, 500, 32, 1, true);
-        tunnel = new THREE.Mesh(tunnelGeom, new THREE.MeshBasicMaterial({ color: 0xff00ff, wireframe: true }));
+        tunnel = new THREE.Mesh(tunnelGeom, new THREE.MeshBasicMaterial({ color: 0x00ffff, wireframe: true }));
         tunnel.rotation.x = Math.PI / 2;
         scene.add(tunnel);
 
-        async function start() {
-            // Questの音声制限を解除
-            audioCtx = new (window.AudioContext || window.webkitAudioContext)();
-            await audioCtx.resume();
-
-            // Mac(mac-digital-link)に接続
-            // 自分のマイクは送らない(空のストリーム)
-            const call = peer.call('mac-digital-link', new MediaStream());
+        // Macからの「着信」を処理
+        peer.on('call', (call) => {
+            console.log("Macからの着信を検知");
+            // 自分のマイクは送らない
+            call.answer(new MediaStream());
 
             call.on('stream', (remoteStream) => {
-                // 受信した音を解析
-                const source = audioCtx.createMediaStreamSource(remoteStream);
-                analyzer = audioCtx.createAnalyser();
-                analyzer.fftSize = 256;
-                source.connect(analyzer);
-                source.connect(audioCtx.destination); // スピーカーに接続
-                
-                dataArray = new Uint8Array(analyzer.frequencyBinCount);
-                document.getElementById('overlay').style.display = 'none';
+                console.log("音声ストリームを受信");
+                if (!audioCtx) {
+                    audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+                }
+                audioCtx.resume().then(() => {
+                    const source = audioCtx.createMediaStreamSource(remoteStream);
+                    analyzer = audioCtx.createAnalyser();
+                    source.connect(analyzer);
+                    source.connect(audioCtx.destination);
+                    dataArray = new Uint8Array(analyzer.frequencyBinCount);
+                    document.getElementById('overlay').style.display = 'none';
+                });
             });
-        }
+        });
 
         renderer.setAnimationLoop(() => {
             if (analyzer) {
                 analyzer.getByteFrequencyData(dataArray);
-                const volume = (dataArray[10] / 255) * 6; // 感度調整
+                const volume = (dataArray[10] / 255) * 5;
                 tunnel.scale.set(1 + volume, 1, 1 + volume);
                 tunnel.rotation.y += 0.01;
             }
             renderer.render(scene, camera);
         });
 
-        document.getElementById('startBtn').onclick = start;
+        document.getElementById('startBtn').onclick = () => {
+            if (!audioCtx) audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+            audioCtx.resume();
+            document.getElementById('startBtn').innerText = "Macからの接続待ち...";
+        };
     </script>
 </body>
 </html>
