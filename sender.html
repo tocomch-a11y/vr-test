@@ -2,62 +2,39 @@
 <html lang="ja">
 <head>
     <meta charset="UTF-8">
-    <title>Mac Audio Sender - Device Select</title>
+    <title>Mac Audio Sender - Stable</title>
     <script src="https://unpkg.com/peerjs@1.3.1/dist/peerjs.min.js"></script>
     <style>
-        body { font-family: sans-serif; background: #111; color: white; display: flex; flex-direction: column; align-items: center; justify-content: center; height: 100vh; margin: 0; }
-        select { padding: 10px; font-size: 16px; margin-bottom: 20px; width: 300px; }
-        button { padding: 20px 40px; font-size: 20px; cursor: pointer; background: #00ff00; border: none; border-radius: 10px; font-weight: bold; }
-        #status { margin-top: 20px; color: #00ffff; }
+        body { font-family: sans-serif; background: #111; color: white; text-align: center; padding-top: 50px; }
+        button { padding: 20px; font-size: 20px; cursor: pointer; background: #00ff00; border-radius: 10px; }
+        #link { margin-top: 20px; word-break: break-all; color: #00ffff; }
     </style>
 </head>
 <body>
-    <h1>Mac音源 配信機</h1>
-    <select id="audioSource"></select><br>
-    <button id="startBtn">1. デバイス読み込み</button>
-    <div id="status">ID: my-vr-audio-sender で待機します</div>
+    <h1>Mac音源 送信機</h1>
+    <button id="startBtn">配信開始 (BlackHoleを選択)</button>
+    <div id="status">Peer準備中...</div>
+    <div id="link"></div>
 
     <script>
-        const peer = new Peer('my-vr-audio-sender');
-        const audioSelect = document.getElementById('audioSource');
-        const startBtn = document.getElementById('startBtn');
-        let localStream;
+        // IDにランダムな数字を入れて競合を防ぐ
+        const senderId = 'vr-audio-' + Math.floor(Math.random() * 9999);
+        const peer = new Peer(senderId);
 
-        // デバイス一覧を取得
-        async function getDevices() {
-            const devices = await navigator.mediaDevices.enumerateDevices();
-            audioSelect.innerHTML = '';
-            devices.filter(d => d.kind === 'audioinput').forEach(d => {
-                const opt = document.createElement('option');
-                opt.value = d.deviceId;
-                opt.text = d.label || `Microphone ${audioSelect.length + 1}`;
-                audioSelect.appendChild(opt);
+        peer.on('open', (id) => {
+            document.getElementById('status').innerText = "送信機ID: " + id;
+            // Questで開くべきURLを表示
+            const questUrl = window.location.href.replace('sender.html', 'index.html') + '?id=' + id;
+            document.getElementById('link').innerHTML = `QuestでこのURLを開いてください:<br><a href="${questUrl}" style="color:cyan">${questUrl}</a>`;
+        });
+
+        document.getElementById('startBtn').onclick = async () => {
+            const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+            peer.on('call', call => {
+                call.answer(stream);
+                document.getElementById('status').innerText = "Questに送信中！";
             });
-            startBtn.innerText = "2. 配信開始";
-        }
-
-        startBtn.onclick = async () => {
-            if (audioSelect.length === 0) {
-                // 初回クリックでマイク許可を求めてからデバイスリストを作る
-                await navigator.mediaDevices.getUserMedia({ audio: true });
-                await getDevices();
-                return;
-            }
-
-            const constraints = {
-                audio: { deviceId: audioSelect.value ? { exact: audioSelect.value } : undefined }
-            };
-
-            localStream = await navigator.mediaDevices.getUserMedia(constraints);
-            
-            peer.on('call', (call) => {
-                console.log("Questから着信！");
-                call.answer(localStream); 
-            });
-
-            document.getElementById('status').innerText = "配信中... Quest側をリロードしてください";
-            startBtn.disabled = true;
-            startBtn.style.background = "#555";
+            document.getElementById('startBtn').style.display = 'none';
         };
     </script>
 </body>
