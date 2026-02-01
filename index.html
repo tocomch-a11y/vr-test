@@ -2,10 +2,10 @@
 <html>
 <head>
     <meta charset="UTF-8">
-    <title>PSY-AR FINAL SYNC</title>
+    <title>PSY-AR HYPER-SYNC</title>
     <style>
         body { margin: 0; background: transparent; overflow: hidden; }
-        #arBtn { position: fixed; top: 50%; left: 50%; transform: translate(-50%,-50%); padding: 60px; font-size: 30px; background: #f0f; color: #fff; border: none; border-radius: 20px; z-index: 10001; cursor: pointer; font-weight: bold; }
+        #arBtn { position: fixed; top: 50%; left: 50%; transform: translate(-50%,-50%); padding: 60px; font-size: 30px; background: #ff00ff; color: #fff; border: none; border-radius: 20px; z-index: 10001; cursor: pointer; font-weight: bold; box-shadow: 0 0 30px #f0f; }
     </style>
 </head>
 <body>
@@ -16,15 +16,25 @@
     <script>
         let scene, camera, renderer, mesh, xrRefSpace;
         let geometries = [];
-        // window直下に配置し、どこからでもアクセス可能にする
         window.mD = { low: 0, mid: 0, high: 0, trigger: false };
         let lastSwitch = 0, hue = 0;
 
+        // 1. サイケデリックな12パターンの基本形状
         function initGeos() {
-            geometries = [];
-            for(let i=0; i<12; i++) {
-                geometries.push(new THREE.TorusKnotGeometry(0.3, 0.1, 128, 16, i + 1, (i % 3) + 3));
-            }
+            geometries = [
+                new THREE.TorusKnotGeometry(0.3, 0.12, 160, 20, 2, 3), // 基本
+                new THREE.IcosahedronGeometry(0.5, 1),               // クリスタル
+                new THREE.TorusGeometry(0.4, 0.2, 32, 100),          // ドーナツ
+                new THREE.OctahedronGeometry(0.6, 0),                 // ピラミッド
+                new THREE.TorusKnotGeometry(0.4, 0.05, 256, 32, 7, 11), // 複雑な紐
+                new THREE.DodecahedronGeometry(0.5, 0),              // 12面体
+                new THREE.BoxGeometry(0.5, 0.5, 0.5, 10, 10, 10),    // グリッド立方体
+                new THREE.SphereGeometry(0.5, 8, 8),                  // ローポリ球
+                new THREE.TorusKnotGeometry(0.3, 0.15, 128, 32, 3, 4), // 太い結び目
+                new THREE.CylinderGeometry(0.5, 0.5, 1, 32, 1, true), // 円柱
+                new THREE.TorusGeometry(0.4, 0.3, 12, 6),             // 粗いリング
+                new THREE.CapsuleGeometry(0.3, 0.4, 8, 16)            // カプセル
+            ];
         }
 
         document.getElementById('arBtn').onclick = async () => {
@@ -42,7 +52,7 @@
             camera = new THREE.PerspectiveCamera(70, window.innerWidth/window.innerHeight, 0.01, 20);
             
             initGeos();
-            mesh = new THREE.Mesh(geometries[0], new THREE.MeshBasicMaterial({ wireframe: true, color: 0x00ffff }));
+            mesh = new THREE.Mesh(geometries[0], new THREE.MeshBasicMaterial({ wireframe: true, color: 0xffffff }));
             scene.add(mesh);
 
             session.requestReferenceSpace('local-floor').then(ref => {
@@ -58,7 +68,6 @@
             const peer = new Peer('quest-receiver');
             peer.on('connection', conn => {
                 conn.on('data', d => {
-                    // データ受信のデバッグ（動かない場合はここが実行されていない）
                     window.mD.low = d.low || 0;
                     window.mD.mid = d.mid || 0;
                     window.mD.high = d.high || 0;
@@ -79,52 +88,65 @@
             hue += 0.005;
             const d = window.mD;
 
-            // 1. 音トリガー（形状変化）
-            if (d.trigger && (Date.now() - lastSwitch > 200)) {
+            // 音トリガーで形状変化
+            if (d.trigger && (Date.now() - lastSwitch > 300)) {
                 mesh.geometry = geometries[Math.floor(Math.random() * geometries.length)];
                 lastSwitch = Date.now();
             }
 
-            // 2. 視線ターゲット
-            const gaze = new THREE.Vector3(0, 0, -0.5).applyQuaternion(camera.quaternion).add(camera.position);
+            const gaze = new THREE.Vector3(0, 0, -0.6).applyQuaternion(camera.quaternion).add(camera.position);
 
-            // 3. ハンドトラッキング（抽出方式の変更）
-            let handAvg = new THREE.Vector3();
+            // 2. ハンドトラッキングでのビジュアル変化
+            let handCenter = new THREE.Vector3();
+            let fingerSpread = 0;
             let count = 0;
             
-            // frame.getPose ではなく inputSource.hand から直接 joint を計算
             for (const input of frame.session.inputSources) {
                 if (input.hand) {
-                    const indexTip = input.hand.get('index-finger-tip');
-                    if (indexTip) {
-                        const pose = frame.getJointPose(indexTip, xrRefSpace);
-                        if (pose) {
-                            handAvg.add(new THREE.Vector3(
-                                pose.transform.position.x,
-                                pose.transform.position.y,
-                                pose.transform.position.z
-                            ));
-                            count++;
+                    const joints = ['thumb-tip', 'index-finger-tip', 'middle-finger-tip', 'ring-finger-tip', 'pinky-tip', 'wrist'];
+                    let handPositions = [];
+
+                    joints.forEach(j => {
+                        const joint = input.hand.get(j);
+                        if (joint) {
+                            const pose = frame.getJointPose(joint, xrRefSpace);
+                            if (pose) {
+                                const pos = new THREE.Vector3(pose.transform.position.x, pose.transform.position.y, pose.transform.position.z);
+                                handCenter.add(pos);
+                                handPositions.push(pos);
+                                count++;
+                            }
                         }
+                    });
+
+                    // 指の広がり（手の大きさ）を計算してビジュアルに反映
+                    if (handPositions.length > 1) {
+                        const wrist = handPositions[handPositions.length - 1];
+                        fingerSpread += wrist.distanceTo(handPositions[1]); // 手首から人差し指の距離
                     }
                 }
             }
 
-            // 4. 反応の適用
             if (count > 0) {
-                // 手の位置へ（視線を30%ブレンドして安定させる）
-                const targetPos = handAvg.divideScalar(count).lerp(gaze, 0.3);
+                const targetPos = handCenter.divideScalar(count);
                 mesh.position.lerp(targetPos, 0.2);
-                mesh.rotation.y += 0.1 + d.high * 2.0; // 高音で激しく回転
+                
+                // 指を広げると回転速度とワイヤーフレームの太さが変わる（ように見せる）
+                mesh.rotation.y += 0.05 + (d.high * 2.0) + (fingerSpread * 0.1);
+                mesh.rotation.x += fingerSpread * 0.05;
             } else {
                 mesh.position.lerp(gaze, 0.1);
                 mesh.rotation.y += 0.02;
             }
 
-            // 5. 音によるスケールと色の変化
-            const s = 0.5 + (d.low * 4.0); // 低音で爆発
+            // 3. 音 + 手の動き でスケールと色を制御
+            // 手を広げているほど、音の反応が巨大化する
+            const s = (0.5 + (d.low * 4.0)) * (1 + fingerSpread * 2); 
             mesh.scale.setScalar(s);
-            mesh.material.color.setHSL((hue + d.mid) % 1, 1, 0.5);
+            
+            // サイケデリックカラー
+            const finalHue = (hue + (d.mid * 0.5)) % 1;
+            mesh.material.color.setHSL(finalHue, 1, 0.5 + (d.high * 0.2));
 
             renderer.render(scene, camera);
         }
