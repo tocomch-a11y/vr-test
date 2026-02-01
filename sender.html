@@ -1,40 +1,74 @@
-<!DOCTYPE html>
-<html>
-<body style="background:#111; color:white; font-family:sans-serif; text-align:center; padding:50px;">
-    <h1>MAC SENDER</h1>
-    <button id="btn" style="padding:25px; font-size:20px; background:#00ff00;">CONNECT TO QUEST</button>
-    <div id="status">Waiting for click...</div>
+// --- 1. Enhanced Geometries (More Complex Shapes) ---
+function createGeos() {
+    geometries = [
+        new THREE.TorusKnotGeometry(1, 0.4, 128, 16),      // 0: Chaos Knot
+        new THREE.IcosahedronGeometry(1.5, 2),             // 1: Crystal Pulse
+        new THREE.TorusGeometry(2, 0.1, 16, 100),          // 2: Infinite Ring
+        new THREE.OctahedronGeometry(1.5, 5),              // 3: Fractal Pyramid
+        new THREE.TorusKnotGeometry(1.5, 0.1, 256, 32, 2, 3), // 4: DNA Spiral
+        new THREE.BoxGeometry(2, 2, 2, 10, 10, 10),        // 5: Grid Cube
+        new THREE.DodecahedronGeometry(1.5, 1),            // 6: Bio-Cell
+        new THREE.TorusGeometry(1.5, 0.6, 12, 64),         // 7: Heavy Ring
+        new THREE.SphereGeometry(1.5, 64, 32),             // 8: Star Seed
+        new THREE.ConeGeometry(1.5, 3, 32, 20, true),      // 9: Digital Cone
+        new THREE.TorusKnotGeometry(1.2, 0.5, 128, 8, 5, 2), // 10: Cosmic Knot
+        new THREE.CapsuleGeometry(0.8, 2, 8, 16)           // 11: Energy Pill
+    ];
+}
 
-    <script src="https://unpkg.com/peerjs@1.3.1/dist/peerjs.min.js"></script>
-    <script>
-        const peer = new Peer('mac-sender-' + Date.now());
+// --- 2. Advanced Render Logic (Space Warp & Pulse) ---
+function render(time, frame) {
+    hue += 0.003 + (macData.high * 0.05); // Color speed reacts to high notes
 
-        document.getElementById('btn').onclick = async () => {
-            const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-            const ctx = new AudioContext();
-            const source = ctx.createMediaStreamSource(stream);
-            const analyzer = ctx.createAnalyser();
-            analyzer.fftSize = 256;
-            source.connect(analyzer);
-            const data = new Uint8Array(analyzer.frequencyBinCount);
+    // Beat-Sync Mode Swapping
+    if (macData.trigger && Date.now() - lastSwitch > 600) {
+        currentIdx = Math.floor(Math.random() * 12);
+        mesh.geometry = geometries[currentIdx];
+        lastSwitch = Date.now();
+    }
 
-            document.getElementById('status').innerText = "Connecting...";
-            const dataConn = peer.connect('quest-receiver');
-            peer.call('quest-receiver', stream);
+    if (frame) {
+        const inputSources = frame.session.inputSources;
+        for (const input of inputSources) {
+            if (input.hand) {
+                const tip = frame.getJointPose(input.hand.get('index-finger-tip'), renderer.xr.getReferenceSpace());
+                const wrist = frame.getJointPose(input.hand.get('wrist'), renderer.xr.getReferenceSpace());
+                
+                if (tip && wrist) {
+                    const tPos = tip.transform.position;
+                    const wPos = wrist.transform.position;
+                    const tOri = tip.transform.orientation;
 
-            dataConn.on('open', () => {
-                document.getElementById('status').innerText = "LINK ESTABLISHED - SENDING AUDIO";
-                setInterval(() => {
-                    analyzer.getByteFrequencyData(data);
-                    dataConn.send({
-                        low: data[4]/255,
-                        mid: data[15]/255,
-                        high: data[30]/255,
-                        trigger: data[4] > 210
-                    });
-                }, 16);
-            });
-        };
-    </script>
-</body>
-</html>
+                    // Smooth Follow
+                    mesh.position.lerp(new THREE.Vector3(tPos.x, tPos.y, tPos.z), 0.2);
+
+                    // --- Hand Tilt Distortion ---
+                    // Using the quaternion to rotate the object based on hand angle
+                    mesh.quaternion.slerp(new THREE.Quaternion(tOri.x, tOri.y, tOri.z, tOri.w), 0.1);
+
+                    // Hand Spread Distance
+                    const dist = Math.hypot(tPos.x - wPos.x, tPos.y - wPos.y, tPos.z - wPos.z);
+                    
+                    // Audio-Reactive Scale (reacts to Bass + Hand Size)
+                    const s = 0.4 + (dist * 8) + (macData.low * 3);
+                    mesh.scale.setScalar(s);
+                }
+            }
+        }
+    }
+
+    // --- Psychedelic Visuals ---
+    // Auto-rotation + Audio jitter
+    mesh.rotation.y += 0.01 + macData.high * 0.1;
+    mesh.rotation.z += macData.mid * 0.05;
+
+    // Pulse Color & Transparency
+    const colorSpeed = (hue + macData.mid) % 1;
+    mesh.material.color.setHSL(colorSpeed, 0.9, 0.5 + macData.low * 0.2);
+    mesh.material.opacity = 0.3 + (macData.low * 0.7); // Flash on bass
+    
+    // Slight Wireframe distortion based on High frequencies
+    mesh.material.wireframeLinewidth = 1 + macData.high * 10; 
+
+    renderer.render(scene, camera);
+}
