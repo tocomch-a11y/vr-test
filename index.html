@@ -2,10 +2,10 @@
 <html>
 <head>
     <meta charset="UTF-8">
-    <title>PSY-AR SENSOR SYNC</title>
+    <title>PSY-AR SENSOR SYNC FIXED</title>
     <style>
         body { margin: 0; background: transparent; overflow: hidden; }
-        #arBtn { position: fixed; top: 50%; left: 50%; transform: translate(-50%,-50%); padding: 60px; font-size: 30px; background: #0f0; border: none; border-radius: 20px; z-index: 10001; cursor: pointer; font-weight: bold; }
+        #arBtn { position: fixed; top: 50%; left: 50%; transform: translate(-50%,-50%); padding: 60px; font-size: 30px; background: #0f0; border-radius: 20px; z-index: 10001; cursor: pointer; font-weight: bold; }
     </style>
 </head>
 <body>
@@ -16,7 +16,8 @@
     <script>
         let scene, camera, renderer, mesh, xrRefSpace;
         let geometries = [];
-        let macData = { low: 0, mid: 0, high: 0, trigger: false }; 
+        // データの受信を確実にするためのグローバルストア
+        window.remoteData = { low: 0, mid: 0, high: 0, trigger: false };
         let lastSwitch = 0, hue = 0;
         const audio = document.getElementById('audio');
 
@@ -29,14 +30,11 @@
 
         const btn = document.getElementById('arBtn');
         btn.onclick = async () => {
-            if (navigator.xr) {
-                // hand-tracking を確実に要求
-                const session = await navigator.xr.requestSession('immersive-ar', {
-                    requiredFeatures: ['local-floor', 'hand-tracking']
-                });
-                btn.style.display = 'none';
-                startXR(session);
-            }
+            const session = await navigator.xr.requestSession('immersive-ar', {
+                requiredFeatures: ['local-floor', 'hand-tracking']
+            });
+            btn.style.display = 'none';
+            startXR(session);
         };
 
         function startXR(session) {
@@ -62,11 +60,11 @@
             const peer = new Peer('quest-receiver'); 
             peer.on('connection', conn => {
                 conn.on('data', d => {
-                    // macData オブジェクトを直接更新
-                    macData.low = d.low || 0;
-                    macData.mid = d.mid || 0;
-                    macData.high = d.high || 0;
-                    macData.trigger = !!d.trigger;
+                    // データ受信時にグローバルストアを直接上書き
+                    window.remoteData.low = d.low || 0;
+                    window.remoteData.mid = d.mid || 0;
+                    window.remoteData.high = d.high || 0;
+                    window.remoteData.trigger = !!d.trigger;
                 });
             });
             peer.on('call', call => {
@@ -78,29 +76,33 @@
         function render(time, frame) {
             if (!frame || !xrRefSpace) return;
             hue += 0.005;
+            
+            // 常にグローバルから最新の音データを取得
+            const d = window.remoteData;
 
-            // 1. 低音トリガーによる形状ランダム切り替え
-            if (macData.trigger && (Date.now() - lastSwitch > 300)) {
+            // 1. 音トリガーで形状変化
+            if (d.trigger && (Date.now() - lastSwitch > 300)) {
                 mesh.geometry = geometries[Math.floor(Math.random() * geometries.length)];
                 lastSwitch = Date.now();
             }
 
-            // 2. 指10本のトラッキング
+            // 2. ハンドトラッキング (10本の指を統合)
             let totalPos = new THREE.Vector3(), count = 0;
-            for (const input of frame.session.inputSources) {
+            const sources = frame.session.inputSources;
+            for (let input of sources) {
                 if (input.hand) {
                     const joints = ['thumb-tip', 'index-finger-tip', 'middle-finger-tip', 'ring-finger-tip', 'pinky-tip'];
                     joints.forEach(j => {
                         const joint = input.hand.get(j);
-                        const pose = joint ? frame.getJointPose(joint, xrRefSpace) : null;
-                        if (pose) {
-                            // 座標を再構築して計算
-                            totalPos.add(new THREE.Vector3(
-                                pose.transform.position.x,
-                                pose.transform.position.y,
-                                pose.transform.position.z
-                            ));
-                            count++;
+                        if (joint) {
+                            const pose = frame.getJointPose(joint, xrRefSpace);
+                            if (pose) {
+                                // 座標を単純な数値として抽出し、Vector3を再生成（これが重要）
+                                totalPos.x += pose.transform.position.x;
+                                totalPos.y += pose.transform.position.y;
+                                totalPos.z += pose.transform.position.z;
+                                count++;
+                            }
                         }
                     });
                 }
@@ -109,23 +111,20 @@
             const gazeDir = new THREE.Vector3(0, 0, -0.6).applyQuaternion(camera.quaternion).add(camera.position);
 
             if (count > 0) {
-                const avgPos = totalPos.divideScalar(count);
-                // 手の位置へ高速追従
-                mesh.position.lerp(avgPos, 0.2);
-                // 指の数と高音域で回転を加速
-                mesh.rotation.y += 0.05 + (macData.high * 1.0);
+                const avgPos = new THREE.Vector3(totalPos.x/count, totalPos.y/count, totalPos.z/count);
+                mesh.position.lerp(avgPos, 0.2); // 手の位置へ追従
+                mesh.rotation.y += 0.05 + (d.high * 1.5); // 高音で高速回転
             } else {
-                mesh.position.lerp(gazeDir, 0.05);
+                mesh.position.lerp(gazeDir, 0.05); // 手がない時は視線の先へ
                 mesh.rotation.y += 0.02;
             }
 
-            // 3. 音データの反映（低音で巨大化、中音で色変化）
-            const s = 0.5 + (macData.low * 3.5);
+            // 3. 音による視覚変化
+            const s = 0.4 + (d.low * 4.0); // 低音で巨大化
             mesh.scale.setScalar(s);
             
-            // 色の変化をより劇的に
-            const colorHue = (hue + (macData.mid * 0.7)) % 1;
-            mesh.material.color.setHSL(colorHue, 1, 0.5);
+            const colorHue = (hue + (d.mid * 0.8)) % 1; // 中音で色相がサイケに変化
+            mesh.material.color.setHSL(colorHue, 1, 0.5 + (d.high * 0.2));
             
             renderer.render(scene, camera);
         }
