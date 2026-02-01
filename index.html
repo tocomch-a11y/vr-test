@@ -2,23 +2,21 @@
 <html lang="ja">
 <head>
     <meta charset="UTF-8">
-    <title>VR Tunnel - Perfect Sync</title>
+    <title>VR Tunnel - Ninja Final</title>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
-    <script src="https://unpkg.com/peerjs@1.3.1/dist/peerjs.min.js"></script>
     <style>
         body { margin: 0; background: #000; overflow: hidden; font-family: sans-serif; }
         #overlay { position: absolute; top: 0; left: 0; width: 100%; height: 100%; display: flex; flex-direction: column; justify-content: center; align-items: center; color: white; background: #000; z-index: 100; }
-        input { padding: 15px; font-size: 18px; border-radius: 10px; margin: 10px; width: 300px; text-align: center; background: #222; color: #fff; border: 1px solid #00ffff; }
+        input { padding: 15px; font-size: 18px; border-radius: 10px; margin: 10px; width: 280px; text-align: center; border: 2px solid #00ffff; background: #222; color: #fff; }
         button { padding: 20px 40px; font-size: 20px; background: #00ffff; border: none; border-radius: 50px; cursor: pointer; font-weight: bold; }
-        #status { margin-top: 15px; color: #00ffff; font-size: 14px; }
     </style>
 </head>
 <body>
     <div id="overlay">
-        <h1>VR Tunnel (Digital Link)</h1>
-        <input type="text" id="targetId" placeholder="送信機IDを入力">
-        <button id="startBtn">VR起動</button>
-        <div id="status">Macの sender.html を先に開始してください</div>
+        <h1>VR連動 (Digital Ninja)</h1>
+        <input type="text" id="ninjaId" placeholder="VDO.ninjaのIDを入力">
+        <button id="startBtn">VR連動を開始</button>
+        <p id="status">Questのマイク音は無視されます</p>
     </div>
 
     <script type="module">
@@ -26,9 +24,8 @@
 
         let scene, camera, renderer, analyzer, dataArray, audioCtx;
         let tunnel, particles;
-        const peer = new Peer(); 
 
-        function initScene() {
+        function initThreeJS() {
             scene = new THREE.Scene();
             camera = new THREE.PerspectiveCamera(90, window.innerWidth / window.innerHeight, 0.1, 1000);
             renderer = new THREE.WebGLRenderer({ antialias: true });
@@ -52,47 +49,46 @@
             animate();
         }
 
-        async function connectToMac() {
-            const id = document.getElementById('targetId').value;
+        async function connectAudio() {
+            const id = document.getElementById('ninjaId').value;
             if(!id) return;
 
-            // Questの音声制限解除
             audioCtx = new (window.AudioContext || window.webkitAudioContext)();
             await audioCtx.resume();
 
-            // Mac(sender.html)に電話をかける
-            // 第2引数に空のストリームを渡すことで、Quest側のマイクを一切使わないようにします
-            const call = peer.call(id, new MediaStream());
-
-            call.on('stream', (remoteStream) => {
-                // ここで受信した音がMacのデジタル音です
-                const source = audioCtx.createMediaStreamSource(remoteStream);
+            // --- 秘策: VDO.ninjaの音声をHTML要素として生成し、直接解析する ---
+            const audio = new Audio();
+            audio.crossOrigin = "anonymous";
+            // エコーキャンセル等のノイズ除去を一切行わない生データを要求
+            audio.src = `https://vdo.ninja/api/?view=${id}&autoplay&audioonly&cleanoutput&noecho=1`;
+            
+            audio.oncanplaythrough = () => {
+                audio.play();
+                const source = audioCtx.createMediaElementSource(audio);
                 analyzer = audioCtx.createAnalyser();
                 analyzer.fftSize = 256;
                 source.connect(analyzer);
-                
-                // Questのスピーカーへ出力（これで音が聞こえる）
                 source.connect(audioCtx.destination);
                 
                 dataArray = new Uint8Array(analyzer.frequencyBinCount);
                 document.getElementById('overlay').style.display = 'none';
-            });
+            };
 
-            peer.on('error', err => {
-                document.getElementById('status').innerText = "接続失敗：IDを確認してください";
-            });
+            // エラー時
+            audio.onerror = () => { alert("IDが正しくないか、通信エラーです。"); };
         }
 
         function animate() {
             renderer.setAnimationLoop(() => {
                 if (analyzer) {
                     analyzer.getByteFrequencyData(dataArray);
-                    const bass = (dataArray[5] / 255) * 8; // 感度ブースト
+                    // 感度を限界までブースト (10倍)
+                    const bass = (dataArray[10] / 255) * 10;
                     tunnel.scale.set(1 + bass, 1, 1 + bass);
                     tunnel.rotation.y += 0.01;
                     const pos = particles.geometry.attributes.position.array;
                     for (let i = 2; i < pos.length; i += 3) {
-                        pos[i] += 0.5 + bass * 12;
+                        pos[i] += 0.5 + bass * 15;
                         if (pos[i] > 200) pos[i] = -200;
                     }
                     particles.geometry.attributes.position.needsUpdate = true;
@@ -102,8 +98,8 @@
         }
 
         document.getElementById('startBtn').onclick = () => {
-            initScene();
-            connectToMac();
+            initThreeJS();
+            connectAudio();
         };
     </script>
 </body>
