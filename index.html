@@ -2,60 +2,74 @@
 <html>
 <head>
     <meta charset="UTF-8">
-    <title>PSY-AR MINIMUM</title>
+    <title>REBOOT AR</title>
     <style>
-        body { margin: 0; background: #000; overflow: hidden; }
+        body { margin: 0; background: #000; color: #fff; font-family: sans-serif; text-align: center; }
         #arBtn { 
-            position: fixed; top: 50%; left: 50%; transform: translate(-50%,-50%); 
-            padding: 50px 80px; font-size: 30px; background: #fff; color: #000; 
-            border: 8px solid #0f0; border-radius: 20px; z-index: 10000; font-weight: bold;
+            margin-top: 40vh; padding: 40px 60px; font-size: 25px; 
+            background: #fff; border: none; border-radius: 15px; font-weight: bold;
         }
+        #info { margin-top: 20px; color: #888; }
     </style>
 </head>
 <body>
-    <button id="arBtn">START AR</button>
+    <button id="arBtn">ARを起動する</button>
+    <div id="info">ボタンを押した後、数秒待ってください</div>
+
     <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+
     <script>
-        let scene, camera, renderer, mesh, xrRefSpace;
+        const btn = document.getElementById('arBtn');
         
         async function startAR() {
+            // 1. 古いエラーを消すためにコンソールをクリア
+            console.clear();
+            
+            // 2. WebXRが使えるか最終チェック
+            if (!navigator.xr) {
+                alert("HTTPSで接続してください。");
+                return;
+            }
+
             try {
-                // 【重要】一切のFeaturesを要求せず、ARセッションだけを開始
+                // 3. 機能を最小限（immersive-arのみ）にしてリクエスト
+                // エラーが出る場合はここが原因。
                 const session = await navigator.xr.requestSession('immersive-ar');
-                
-                renderer = new THREE.WebGLRenderer({ antialias: false, alpha: true });
+
+                // 4. セッションが取れたら、レンダラー作成
+                const renderer = new THREE.WebGLRenderer({ antialias: false, alpha: true });
                 renderer.xr.enabled = true;
-                renderer.setSize(window.innerWidth, window.innerHeight);
                 document.body.appendChild(renderer.domElement);
-                document.getElementById('arBtn').style.display = 'none';
+                btn.style.display = 'none';
 
-                scene = new THREE.Scene();
-                camera = new THREE.PerspectiveCamera(70, window.innerWidth/window.innerHeight, 0.01, 20);
+                const scene = new THREE.Scene();
+                const camera = new THREE.PerspectiveCamera(70, window.innerWidth/window.innerHeight, 0.01, 10);
                 
-                // 軽いテスト用オブジェクト
-                mesh = new THREE.Mesh(
+                // 目の前に青い立方体を表示（テスト用）
+                const cube = new THREE.Mesh(
                     new THREE.BoxGeometry(0.2, 0.2, 0.2), 
-                    new THREE.MeshBasicMaterial({ color: 0x00ff00, wireframe: true })
+                    new THREE.MeshBasicMaterial({ color: 0x0000ff, wireframe: true })
                 );
-                mesh.position.set(0, 0, -0.5); // 目の前
-                scene.add(mesh);
+                cube.position.set(0, 0, -0.5);
+                scene.add(cube);
 
-                // viewerは絶対に失敗しない空間設定
-                xrRefSpace = await session.requestReferenceSpace('viewer');
+                const refSpace = await session.requestReferenceSpace('viewer');
                 await renderer.xr.setSession(session);
                 
                 renderer.setAnimationLoop(() => {
-                    mesh.rotation.y += 0.02;
+                    cube.rotation.y += 0.01;
                     renderer.render(scene, camera);
                 });
 
                 session.addEventListener('end', () => window.location.reload());
+
             } catch (e) {
-                alert("FAIL: " + e.message);
-                window.location.reload();
+                // エラー内容を画面に大きく出す
+                document.body.innerHTML = `<h2 style="color:red">起動失敗</h2><p>${e.message}</p><button onclick="location.reload()">ページを再読み込み</button>`;
             }
         }
-        document.getElementById('arBtn').onclick = startAR;
+
+        btn.onclick = startAR;
     </script>
 </body>
 </html>
