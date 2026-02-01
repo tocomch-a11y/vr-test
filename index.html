@@ -1,34 +1,134 @@
-// --- 追加：ARモードに入った後に画面をタップすると音を強制的に出す ---
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Psy-XR Final Link</title>
+    <style>
+        body { margin: 0; background: #000; overflow: hidden; font-family: sans-serif; }
+        #arBtn { 
+            position: fixed; top: 50%; left: 50%; transform: translate(-50%, -50%);
+            padding: 60px 100px; font-size: 40px; background: #00ffff; color: #000;
+            border: 8px solid #fff; border-radius: 20px; font-weight: bold; z-index: 9999;
+            cursor: pointer;
+        }
+        #status { position: fixed; bottom: 20px; width: 100%; text-align: center; color: #0f0; z-index: 1000; font-size: 18px; text-shadow: 2px 2px #000; }
+    </style>
+</head>
+<body>
+    <button id="arBtn">START AR</button>
+    <div id="status">INITIALIZING...</div>
+    <audio id="remoteAudio" autoplay></audio>
+
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+    <script src="https://unpkg.com/peerjs@1.3.1/dist/peerjs.min.js"></script>
+
+    <script>
+        const btn = document.getElementById('arBtn');
+        const status = document.getElementById('status');
+        const audio = document.getElementById('remoteAudio');
+        
+        let renderer, scene, camera, mesh, xrRefSpace;
+        let geometries = [];
+        let macData = { low: 0, mid: 0, high: 0, trigger: false };
+        let currentIdx = 0, lastSwitch = 0, hue = 0;
+
+        // Force audio play on screen tap after AR starts
         window.onclick = () => {
-            if (audio) {
-                audio.play().then(() => {
-                    console.log("Audio playing successfully");
-                }).catch(e => {
-                    console.log("Audio play failed:", e);
-                });
+            if (audio && audio.srcObject) {
+                audio.muted = false;
+                audio.play().catch(e => console.log("Audio play failed:", e));
             }
         };
 
+        btn.onclick = () => {
+            if (!navigator.xr) {
+                status.innerText = "WEBXR NOT SUPPORTED";
+                return;
+            }
+            navigator.xr.requestSession('immersive-ar', {
+                requiredFeatures: ['local-floor', 'hand-tracking']
+            }).then(setupXR).catch(err => {
+                status.innerText = "XR ERROR: " + err.message;
+            });
+        };
+
+        function setupXR(session) {
+            btn.style.display = 'none';
+            
+            renderer = new THREE.WebGLRenderer({ antialias: false, alpha: true, powerPreference: "high-performance" });
+            renderer.xr.enabled = true;
+            renderer.setPixelRatio(1);
+            renderer.setSize(window.innerWidth, window.innerHeight);
+            
+            scene = new THREE.Scene();
+            camera = new THREE.PerspectiveCamera(70, window.innerWidth/window.innerHeight, 0.1, 100);
+
+            createGeos();
+            const mat = new THREE.MeshBasicMaterial({ wireframe: true, transparent: true, opacity: 0.8 });
+            mesh = new THREE.Mesh(geometries[0], mat);
+            scene.add(mesh);
+
+            session.requestReferenceSpace('local-floor').then((refSpace) => {
+                xrRefSpace = refSpace;
+                renderer.xr.setSession(session);
+                initPeer();
+                renderer.setAnimationLoop(render);
+            });
+        }
+
+        function createGeos() {
+            geometries = [
+                new THREE.TorusKnotGeometry(1, 0.4, 128, 16),
+                new THREE.IcosahedronGeometry(1.5, 1),
+                new THREE.TorusGeometry(2, 0.05, 16, 100),
+                new THREE.OctahedronGeometry(1.5, 0),
+                new THREE.TorusKnotGeometry(1.5, 0.1, 200, 3, 3, 5),
+                new THREE.BoxGeometry(2, 2, 2, 4, 4, 4),
+                new THREE.DodecahedronGeometry(1.5, 0),
+                new THREE.TorusGeometry(1.5, 0.8, 12, 6),
+                new THREE.SphereGeometry(1.5, 32, 32),
+                new THREE.ConeGeometry(1.5, 3, 32, 1, true),
+                new THREE.TorusKnotGeometry(1.2, 0.6, 64, 4),
+                new THREE.CapsuleGeometry(1, 2, 4, 16)
+            ];
+        }
+
+        function initPeer() {
+            const peer = new Peer('quest-receiver'); 
+            peer.on('open', (id) => { status.innerText = "READY. RUN MAC SENDER NOW."; });
+            peer.on('connection', conn => {
+                status.innerText = "DATA LINK ESTABLISHED";
+                conn.on('data', data => { macData = data; });
+            });
+            peer.on('call', call => {
+                call.answer(new MediaStream());
+                call.on('stream', stream => {
+                    audio.srcObject = stream;
+                    status.innerText = "FULL LINK ACTIVE";
+                });
+            });
+        }
+
         function render(time, frame) {
-            if (!frame) return;
+            if (!frame || !xrRefSpace) return;
             hue += 0.005;
 
-            // --- 重要：ここで常に音量のミュートを解除し、再生を試みる ---
+            // Audio Auto-Resume
             if (audio.srcObject && audio.paused) {
-                audio.play().catch(() => { /* ユーザー操作待ち */ });
+                audio.play().catch(() => {});
             }
 
-            // 音のトリガーで形をランダム変更
+            // Sync Shape to Beat
             if (macData.trigger && (Date.now() - lastSwitch > 700)) {
                 currentIdx = (currentIdx + 1) % geometries.length;
                 mesh.geometry = geometries[currentIdx];
                 lastSwitch = Date.now();
             }
 
-            // ハンドトラッキング（手が認識されている時だけ吸い付く）
-            const session = frame.session;
+            // Hand Tracking Follow
             let handDetected = false;
-            for (const input of session.inputSources) {
+            for (const input of frame.session.inputSources) {
                 if (input.hand) {
                     const joint = input.hand.get('index-finger-tip');
                     const pose = frame.getJointPose(joint, xrRefSpace);
@@ -40,11 +140,21 @@
                 }
             }
 
-            if (!handDetected) mesh.rotation.y += 0.01;
+            // Rotation & Float logic if no hand
+            if (!handDetected) {
+                mesh.rotation.y += 0.01;
+                const idlePos = new THREE.Vector3(0, 0, -1).applyQuaternion(camera.quaternion).add(camera.position);
+                mesh.position.lerp(idlePos, 0.05);
+            }
 
-            const s = 1 + (macData.low * 2);
+            // Audio Reactive Scaler
+            const s = 1 + (macData.low * 2.5);
             mesh.scale.setScalar(s);
-            mesh.material.color.setHSL((hue + macData.mid) % 1, 0.8, 0.5);
+            mesh.material.color.setHSL((hue + macData.mid) % 1, 0.8, 0.5 + macData.low * 0.2);
+            mesh.material.opacity = 0.4 + (macData.low * 0.6);
 
             renderer.render(scene, camera);
         }
+    </script>
+</body>
+</html>
