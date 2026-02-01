@@ -2,22 +2,21 @@
 <html lang="ja">
 <head>
     <meta charset="UTF-8">
-    <title>Retro Psychedelic XR</title>
+    <title>Psychedelic AR Ultra</title>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
     <script src="https://unpkg.com/peerjs@1.3.1/dist/peerjs.min.js"></script>
     <style>
         body { margin: 0; background: #000; overflow: hidden; font-family: sans-serif; }
-        #overlay { position: absolute; width: 100%; height: 100%; display: flex; flex-direction: column; justify-content: center; align-items: center; color: white; background: #000; z-index: 100; }
-        button { padding: 25px 50px; font-size: 20px; background: #ff00ff; color: white; border: none; border-radius: 50px; cursor: pointer; font-weight: bold; margin: 10px; }
-        #status { color: #00ffff; font-size: 1.2em; margin-bottom: 20px; }
+        #overlay { position: absolute; width: 100%; height: 100%; display: flex; flex-direction: column; justify-content: center; align-items: center; color: white; background: rgba(0,0,0,0.8); z-index: 100; }
+        button { padding: 30px 60px; font-size: 24px; background: #ff00ff; color: white; border: none; border-radius: 50px; cursor: pointer; margin: 10px; font-weight: bold; }
     </style>
 </head>
 <body>
     <div id="overlay">
-        <div id="status">信号を待機中... (Mac: psy-link-stable-mac)</div>
+        <div id="status">接続待機中...</div>
         <div id="btnContainer" style="display:none;">
-            <button id="vrBtn">VR START</button>
-            <button id="arBtn">AR START</button>
+            <button onclick="initXR('immersive-vr')">VR START</button>
+            <button onclick="initXR('immersive-ar')">AR START</button>
         </div>
     </div>
     <audio id="remoteAudio" autoplay></audio>
@@ -28,7 +27,7 @@
         let scene, camera, renderer, analyzer, dataL, audioCtx;
         let currentMode = 'Y', autoMode = false, isRightTrigger = false;
         let lastAutoSwitch = 0, hueBase = 0;
-        const group = new THREE.Group();
+        const groups = { A: new THREE.Group(), B: new THREE.Group(), X: new THREE.Group(), Y: new THREE.Group() };
 
         const peer = new Peer('psy-link-stable-quest');
         peer.on('call', call => {
@@ -41,42 +40,71 @@
             });
         });
 
-        document.getElementById('vrBtn').onclick = () => initXR('immersive-vr');
-        document.getElementById('arBtn').onclick = () => initXR('immersive-ar');
-
-        async function initXR(mode) {
+        window.initXR = async (mode) => {
             audioCtx = new (window.AudioContext || window.webkitAudioContext)();
             await audioCtx.resume();
             const source = audioCtx.createMediaStreamSource(window.remoteStream);
             analyzer = audioCtx.createAnalyser();
-            analyzer.fftSize = 256;
+            analyzer.fftSize = 512;
             source.connect(analyzer);
             dataL = new Uint8Array(analyzer.frequencyBinCount);
             source.connect(audioCtx.destination);
-            
             document.getElementById('overlay').style.display = 'none';
             setupThreeJS(mode);
-        }
+        };
 
         function setupThreeJS(mode) {
             scene = new THREE.Scene();
             camera = new THREE.PerspectiveCamera(75, window.innerWidth/window.innerHeight, 0.1, 1000);
-            renderer = new THREE.WebGLRenderer({ antialias: false, alpha: true }); // パフォーマンス重視
+            renderer = new THREE.WebGLRenderer({ antialias: false, alpha: true });
             renderer.setSize(window.innerWidth, window.innerHeight);
             renderer.xr.enabled = true;
             document.body.appendChild(renderer.domElement);
             navigator.xr.requestSession(mode, { optionalFeatures: ['local-floor'] }).then(s => renderer.xr.setSession(s));
-            scene.add(group);
+
+            createModeY(); createModeB(); createModeX(); createModeA();
+            Object.values(groups).forEach(g => { g.visible = false; scene.add(g); });
+            groups.Y.visible = true;
             animate();
         }
 
-        // メモリ解放用関数
-        function cleanGroup() {
-            while(group.children.length > 0){ 
-                const obj = group.children[0];
-                if(obj.geometry) obj.geometry.dispose();
-                if(obj.material) obj.material.dispose();
-                group.remove(obj); 
+        // --- Y: 高密度スペクトラム・リング ---
+        function createModeY() {
+            for(let j=0; j<40; j++) { // リング数を40に増加
+                const geo = new THREE.BufferGeometry();
+                const pts = new Float32Array(128 * 3);
+                geo.setAttribute('position', new THREE.BufferAttribute(pts, 3));
+                const line = new THREE.LineLoop(geo, new THREE.LineBasicMaterial({transparent: true}));
+                groups.Y.add(line);
+            }
+        }
+
+        // --- B: レインボー・ベジェ・ストリーム ---
+        function createModeB() {
+            for(let i=0; i<8; i++) {
+                const geo = new THREE.BufferGeometry();
+                const pts = new Float32Array(100 * 3);
+                geo.setAttribute('position', new THREE.BufferAttribute(pts, 3));
+                const line = new THREE.Line(geo, new THREE.LineBasicMaterial({linewidth: 2}));
+                groups.B.add(line);
+            }
+        }
+
+        // --- X: 全方位サイケ・カオス ---
+        function createModeX() {
+            const geotypes = [new THREE.IcosahedronGeometry(2,0), new THREE.TorusGeometry(2,0.5,8,16), new THREE.BoxGeometry(2,2,2)];
+            for(let i=0; i<60; i++) {
+                const mesh = new THREE.Mesh(geotypes[i%3], new THREE.MeshBasicMaterial({wireframe: true}));
+                mesh.position.set((Math.random()-0.5)*100, (Math.random()-0.5)*100, (Math.random()-0.5)*100);
+                groups.X.add(mesh);
+            }
+        }
+
+        // --- A: ネオン・グリッド・カレイドスコープ (再設計) ---
+        function createModeA() {
+            for(let i=0; i<100; i++) {
+                const mesh = new THREE.Mesh(new THREE.PlaneGeometry(5, 5), new THREE.MeshBasicMaterial({side: THREE.DoubleSide, wireframe:true}));
+                groups.A.add(mesh);
             }
         }
 
@@ -87,17 +115,13 @@
                     for (const source of session.inputSources) {
                         const b = source.gamepad.buttons;
                         if (source.handedness === 'right') {
-                            if (b[4]?.pressed) currentMode = 'A';
-                            if (b[5]?.pressed) currentMode = 'B';
-                            isRightTrigger = b[0]?.pressed; // 右トリガー（押してる間だけ）
+                            if (b[4]?.pressed) switchM('A');
+                            if (b[5]?.pressed) switchM('B');
+                            isRightTrigger = b[0]?.pressed;
                         } else {
-                            if (b[4]?.pressed) currentMode = 'X';
-                            if (b[5]?.pressed) currentMode = 'Y';
-                            // 左トリガー（1回押しでトグル）
-                            if (b[0]?.pressed && Date.now() - lastAutoSwitch > 500) {
-                                autoMode = !autoMode;
-                                lastAutoSwitch = Date.now();
-                            }
+                            if (b[4]?.pressed) switchM('X');
+                            if (b[5]?.pressed) switchM('Y');
+                            if (b[0]?.pressed && Date.now() - lastAutoSwitch > 500) { autoMode = !autoMode; lastAutoSwitch = Date.now(); }
                         }
                     }
                 }
@@ -105,57 +129,64 @@
                 if (analyzer) {
                     analyzer.getByteFrequencyData(dataL);
                     const low = dataL[5]/255, mid = dataL[20]/255, high = dataL[60]/255;
-                    hueBase += 0.003 + high * 0.02;
+                    hueBase += 0.003;
 
-                    // オート/ランダムモード切替
                     if ((autoMode || isRightTrigger) && low > 0.8 && Date.now() - lastAutoSwitch > 300) {
-                        currentMode = ['A','B','X','Y'][Math.floor(Math.random()*4)];
+                        switchM(['A','B','X','Y'][Math.floor(Math.random()*4)]);
                         lastAutoSwitch = Date.now();
                     }
 
-                    cleanGroup();
-
                     if (currentMode === 'Y') {
-                        // お気に入りリングの強化版
-                        for(let j=0; j<12; j++){
-                            const pts = [];
-                            for(let i=0; i<=64; i++){
-                                const a = (i/64)*Math.PI*2;
-                                const r = 10 + j*2 + (dataL[i%32]/255)*(5+j);
-                                pts.push(new THREE.Vector3(Math.cos(a)*r, Math.sin(a)*r, -j*15));
+                        groups.Y.children.forEach((line, j) => {
+                            const pos = line.geometry.attributes.position.array;
+                            const rBase = j * 0.8; // 中央から埋め尽くす
+                            for(let i=0; i<128; i++) {
+                                const a = (i/128)*Math.PI*2;
+                                const f = dataL[i%128]/255; // スペクトラム連動
+                                const r = rBase + f * (5 + j*0.2);
+                                pos[i*3] = Math.cos(a)*r; pos[i*3+1] = Math.sin(a)*r; pos[i*3+2] = -j*5;
                             }
-                            group.add(new THREE.Line(new THREE.BufferGeometry().setFromPoints(pts), new THREE.LineBasicMaterial({color: new THREE.Color().setHSL((hueBase+j*0.05)%1,1,0.5)})));
-                        }
-                    } else if (currentMode === 'A') {
-                        // 3D MAZE: 音圧で壁が押し寄せる迷路
-                        for(let i=0; i<16; i++){
-                            const wallGeo = new THREE.BoxGeometry(10, 20 * low, 10);
-                            const wall = new THREE.Mesh(wallGeo, new THREE.MeshBasicMaterial({color: new THREE.Color().setHSL((hueBase+i*0.1)%1, 1, 0.5), wireframe:true}));
-                            wall.position.set(Math.sin(i)*30, Math.cos(i)*30, -50 + (i*5));
-                            group.add(wall);
-                        }
+                            line.geometry.attributes.position.needsUpdate = true;
+                            line.material.color.setHSL((hueBase + j*0.02)%1, 1, 0.5);
+                            line.material.opacity = 1.0 - (j/40);
+                        });
                     } else if (currentMode === 'B') {
-                        // BEZIERS: 曲線が舞う
-                        const pts = [];
-                        for(let i=0; i<50; i++){
-                            pts.push(new THREE.Vector3(Math.sin(i+low*10)*20, Math.cos(i+mid*10)*20, -30-i*2));
-                        }
-                        const curve = new THREE.CatmullRomCurve3(pts);
-                        const tube = new THREE.TubeGeometry(curve, 64, 0.5 + high*2, 8, false);
-                        group.add(new THREE.Mesh(tube, new THREE.MeshBasicMaterial({color: new THREE.Color().setHSL(hueBase%1,1,0.5), wireframe:true})));
+                        groups.B.children.forEach((line, j) => {
+                            const pos = line.geometry.attributes.position.array;
+                            for(let i=0; i<100; i++) {
+                                pos[i*3] = Math.sin(i*0.1 + hueBase*j)*20;
+                                pos[i*3+1] = Math.cos(i*0.1 + mid*5)*20;
+                                pos[i*3+2] = -i*2;
+                            }
+                            line.geometry.attributes.position.needsUpdate = true;
+                            line.material.color.setHSL((hueBase + j*0.13)%1, 1, 0.5); // 線ごとに色を変える
+                        });
                     } else if (currentMode === 'X') {
-                        // MYSTIFY: 浮遊するラインの残像
-                        for(let i=0; i<5; i++){
-                            const poly = new THREE.TorusGeometry(10+i*low*5, 0.2, 8, 4 + Math.floor(mid*10));
-                            const m = new THREE.Mesh(poly, new THREE.MeshBasicMaterial({color: new THREE.Color().setHSL((hueBase+i*0.2)%1,1,0.5)}));
-                            m.position.set(Math.sin(Date.now()*0.001+i)*20, Math.cos(Date.now()*0.001+i)*20, -40);
-                            m.rotation.z = Date.now()*0.002;
-                            group.add(m);
-                        }
+                        groups.X.children.forEach((m, i) => {
+                            m.position.x += Math.sin(Date.now()*0.001 + i)*mid;
+                            m.position.y += Math.cos(Date.now()*0.001 + i)*low;
+                            m.position.z += Math.sin(Date.now()*0.002 + i)*high;
+                            if(m.position.length() > 100) m.position.setScalar(0);
+                            m.rotation.x += 0.02;
+                            m.material.color.setHSL((hueBase + i*0.05)%1, 1, 0.5);
+                        });
+                    } else if (currentMode === 'A') {
+                        groups.A.children.forEach((m, i) => {
+                            const a = (i/100)*Math.PI*2;
+                            const r = 30 + low*20;
+                            m.position.set(Math.cos(a + hueBase)*r, Math.sin(a + hueBase)*r, -50 + Math.sin(hueBase*5 + i)*20);
+                            m.rotation.z = a + hueBase;
+                            m.material.color.setHSL((hueBase + i*0.01)%1, 1, 0.5);
+                        });
                     }
                 }
                 renderer.render(scene, camera);
             });
+        }
+
+        function switchM(m) {
+            currentMode = m;
+            Object.keys(groups).forEach(k => groups[k].visible = (k === m));
         }
     </script>
 </body>
