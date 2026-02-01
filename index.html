@@ -2,137 +2,130 @@
 <html>
 <head>
     <meta charset="UTF-8">
-    <title>Psy-AR Sync Ultra</title>
+    <title>PSY-AR FINAL SYNC</title>
     <style>
         body { margin: 0; background: transparent; overflow: hidden; }
-        #arBtn { position: fixed; top: 50%; left: 50%; transform: translate(-50%,-50%); padding: 60px; font-size: 30px; background: #00ff00; color: #000; border: none; border-radius: 20px; z-index: 10001; cursor: pointer; font-weight: bold; box-shadow: 0 0 20px #0f0; }
+        #arBtn { position: fixed; top: 50%; left: 50%; transform: translate(-50%,-50%); padding: 60px; font-size: 30px; background: #f0f; color: #fff; border: none; border-radius: 20px; z-index: 10001; cursor: pointer; font-weight: bold; }
     </style>
 </head>
 <body>
-    <button id="arBtn">START AR SYNC</button>
+    <button id="arBtn">START SYNC AR</button>
     <audio id="audio" autoplay playsinline></audio>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
     <script src="https://unpkg.com/peerjs@1.3.1/dist/peerjs.min.js"></script>
     <script>
         let scene, camera, renderer, mesh, xrRefSpace;
         let geometries = [];
-        // 強制的にグローバルスコープで管理
-        window.soundData = { low: 0, mid: 0, high: 0, trigger: false };
+        // window直下に配置し、どこからでもアクセス可能にする
+        window.mD = { low: 0, mid: 0, high: 0, trigger: false };
         let lastSwitch = 0, hue = 0;
-        const audio = document.getElementById('audio');
 
         function initGeos() {
             geometries = [];
             for(let i=0; i<12; i++) {
-                // 形状の変化を大きくするためパラメータを工夫
-                geometries.push(new THREE.TorusKnotGeometry(0.3, 0.1, 128, 16, i + 1, (i % 3) + 2));
+                geometries.push(new THREE.TorusKnotGeometry(0.3, 0.1, 128, 16, i + 1, (i % 3) + 3));
             }
         }
 
-        const btn = document.getElementById('arBtn');
-        btn.onclick = async () => {
-            if (!navigator.xr) return alert("WebXR not supported");
+        document.getElementById('arBtn').onclick = async () => {
             const session = await navigator.xr.requestSession('immersive-ar', {
                 requiredFeatures: ['local-floor', 'hand-tracking']
             });
-            btn.style.display = 'none';
             startXR(session);
         };
 
         function startXR(session) {
             renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
-            renderer.setSize(window.innerWidth, window.innerHeight);
             renderer.xr.enabled = true;
+            document.body.appendChild(renderer.domElement);
             scene = new THREE.Scene();
             camera = new THREE.PerspectiveCamera(70, window.innerWidth/window.innerHeight, 0.01, 20);
             
             initGeos();
-            mesh = new THREE.Mesh(geometries[0], new THREE.MeshBasicMaterial({ wireframe: true, color: 0x00ff00 }));
+            mesh = new THREE.Mesh(geometries[0], new THREE.MeshBasicMaterial({ wireframe: true, color: 0x00ffff }));
             scene.add(mesh);
 
             session.requestReferenceSpace('local-floor').then(ref => {
                 xrRefSpace = ref;
                 renderer.xr.setSession(session);
-                initPeer(); 
+                initPeer();
                 renderer.setAnimationLoop(render);
             });
+            document.getElementById('arBtn').style.display = 'none';
         }
 
         function initPeer() {
-            const peer = new Peer('quest-receiver'); 
+            const peer = new Peer('quest-receiver');
             peer.on('connection', conn => {
                 conn.on('data', d => {
-                    // window直下のデータに流し込む
-                    window.soundData.low = d.low || 0;
-                    window.soundData.mid = d.mid || 0;
-                    window.soundData.high = d.high || 0;
-                    window.soundData.trigger = !!d.trigger;
+                    // データ受信のデバッグ（動かない場合はここが実行されていない）
+                    window.mD.low = d.low || 0;
+                    window.mD.mid = d.mid || 0;
+                    window.mD.high = d.high || 0;
+                    window.mD.trigger = !!d.trigger;
                 });
             });
             peer.on('call', call => {
                 call.answer(new MediaStream());
-                call.on('stream', s => { audio.srcObject = s; audio.play(); });
+                call.on('stream', s => { 
+                    const aud = document.getElementById('audio');
+                    aud.srcObject = s; aud.play(); 
+                });
             });
         }
 
         function render(time, frame) {
             if (!frame || !xrRefSpace) return;
             hue += 0.005;
-            const d = window.soundData;
+            const d = window.mD;
 
-            // 1. 低音トリガーで形状ランダム変化（感度調整）
-            if (d.trigger && (Date.now() - lastSwitch > 250)) {
+            // 1. 音トリガー（形状変化）
+            if (d.trigger && (Date.now() - lastSwitch > 200)) {
                 mesh.geometry = geometries[Math.floor(Math.random() * geometries.length)];
                 lastSwitch = Date.now();
             }
 
-            // 2. ハンドトラッキング（指10本を個別に再計算）
-            let totalPos = new THREE.Vector3(), count = 0;
-            const sources = frame.session.inputSources;
+            // 2. 視線ターゲット
+            const gaze = new THREE.Vector3(0, 0, -0.5).applyQuaternion(camera.quaternion).add(camera.position);
 
-            for (const input of sources) {
+            // 3. ハンドトラッキング（抽出方式の変更）
+            let handAvg = new THREE.Vector3();
+            let count = 0;
+            
+            // frame.getPose ではなく inputSource.hand から直接 joint を計算
+            for (const input of frame.session.inputSources) {
                 if (input.hand) {
-                    const joints = ['thumb-tip', 'index-finger-tip', 'middle-finger-tip', 'ring-finger-tip', 'pinky-tip'];
-                    joints.forEach(j => {
-                        const joint = input.hand.get(j);
-                        if (joint) {
-                            const pose = frame.getJointPose(joint, xrRefSpace);
-                            if (pose) {
-                                // 参照渡しを避け、座標値のみを取得
-                                totalPos.x += pose.transform.position.x;
-                                totalPos.y += pose.transform.position.y;
-                                totalPos.z += pose.transform.position.z;
-                                count++;
-                            }
+                    const indexTip = input.hand.get('index-finger-tip');
+                    if (indexTip) {
+                        const pose = frame.getJointPose(indexTip, xrRefSpace);
+                        if (pose) {
+                            handAvg.add(new THREE.Vector3(
+                                pose.transform.position.x,
+                                pose.transform.position.y,
+                                pose.transform.position.z
+                            ));
+                            count++;
                         }
-                    });
+                    }
                 }
             }
 
-            const gazePos = new THREE.Vector3(0, 0, -0.6).applyQuaternion(camera.quaternion).add(camera.position);
-
+            // 4. 反応の適用
             if (count > 0) {
-                const avgPos = new THREE.Vector3(totalPos.x / count, totalPos.y / count, totalPos.z / count);
-                // 手の位置に高速でLerp（吸い付く感覚）
-                mesh.position.lerp(avgPos, 0.25);
-                // 高音(high)に合わせて回転を激しく
-                mesh.rotation.y += 0.05 + (d.high * 1.5);
-                mesh.rotation.z += d.high * 0.5;
+                // 手の位置へ（視線を30%ブレンドして安定させる）
+                const targetPos = handAvg.divideScalar(count).lerp(gaze, 0.3);
+                mesh.position.lerp(targetPos, 0.2);
+                mesh.rotation.y += 0.1 + d.high * 2.0; // 高音で激しく回転
             } else {
-                // 手がない時は視線の正面へゆっくり戻る
-                mesh.position.lerp(gazePos, 0.08);
+                mesh.position.lerp(gaze, 0.1);
                 mesh.rotation.y += 0.02;
             }
 
-            // 3. 音データのビジュアル反映
-            // low（低音）でスケールを最大4倍まで
-            const scale = 0.5 + (d.low * 4.0);
-            mesh.scale.setScalar(scale);
-            
-            // mid（中音）で色を激しく変化
-            const c = (hue + (d.mid * 1.2)) % 1;
-            mesh.material.color.setHSL(c, 1, 0.5 + (d.high * 0.2));
-            
+            // 5. 音によるスケールと色の変化
+            const s = 0.5 + (d.low * 4.0); // 低音で爆発
+            mesh.scale.setScalar(s);
+            mesh.material.color.setHSL((hue + d.mid) % 1, 1, 0.5);
+
             renderer.render(scene, camera);
         }
     </script>
